@@ -1,0 +1,10 @@
+session.json
+credentials.json
+token.json
+resume.txt
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
