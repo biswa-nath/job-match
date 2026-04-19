@@ -36,7 +36,8 @@ cp .env.example .env
 
 ## 3. Add your resume
 
-Edit `resume.txt` (or whichever file `DEFAULT_RESUME` points to in `config.py`) and paste your full resume in plain text. **Caveat:** Remove name, contact details and any other sensitive information as all of it will go to LLM.
+Edit `resume.txt` (or whichever file `DEFAULT_RESUME` points to in `config.py`) and paste your full resume in plain text. 
+**Caveat:** Remove name, contact details and any other sensitive information as all of it will go to LLM.
 
 ## 4. Set up Google Sheets OAuth2
 
