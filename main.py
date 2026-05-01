@@ -48,8 +48,15 @@ def _maybe_add_to_sheet(
             f"{job.get('position')} @ {job.get('company')} — {score}%"
         )
         return False
-    append_job_row(job, score, recommendation)
-    mark_added_to_sheet(conn, match_id)
+    try:
+        append_job_row(job, score, recommendation)
+    except Exception as e:
+        console.print(f"[red]Google Sheets error:[/red] {e}")
+        raise
+    try:
+        mark_added_to_sheet(conn, match_id)
+    except Exception as e:
+        console.print(f"[red]Database error (sheet row was written):[/red] {e}")
     return True
 
 
@@ -139,8 +146,7 @@ def main(resume: str, threshold: int, dry_run: bool) -> None:
                             dry_run,
                             conn,
                         )
-                    except Exception as e:
-                        console.print(f"[red]Google Sheets error:[/red] {e}")
+                    except Exception:
                         break
 
                 results.append(
@@ -173,8 +179,7 @@ def main(resume: str, threshold: int, dry_run: bool) -> None:
                 added = _maybe_add_to_sheet(
                     job, match_id, score, recommendation, threshold, dry_run, conn
                 )
-            except Exception as e:
-                console.print(f"[red]Google Sheets error:[/red] {e}")
+            except Exception:
                 break
             results.append(
                 {
