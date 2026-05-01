@@ -50,11 +50,14 @@ def _maybe_add_to_sheet(
         return False
     try:
         append_job_row(job, score, recommendation)
-        mark_added_to_sheet(conn, match_id)
-        return True
     except Exception as e:
         console.print(f"[red]Google Sheets error:[/red] {e}")
-        return False
+        raise
+    try:
+        mark_added_to_sheet(conn, match_id)
+    except Exception as e:
+        console.print(f"[red]Database error (sheet row was written):[/red] {e}")
+    return True
 
 
 @click.command()
@@ -133,15 +136,18 @@ def main(resume: str, threshold: int, dry_run: bool) -> None:
 
                 added = False
                 if not existing["added_to_sheet"]:
-                    added = _maybe_add_to_sheet(
-                        job_stub,
-                        existing["id"],
-                        score,
-                        recommendation,
-                        threshold,
-                        dry_run,
-                        conn,
-                    )
+                    try:
+                        added = _maybe_add_to_sheet(
+                            job_stub,
+                            existing["id"],
+                            score,
+                            recommendation,
+                            threshold,
+                            dry_run,
+                            conn,
+                        )
+                    except Exception:
+                        break
 
                 results.append(
                     {
@@ -169,9 +175,12 @@ def main(resume: str, threshold: int, dry_run: bool) -> None:
             score = match["score"]
             recommendation = match["recommendation"]
             match_id = save_match(conn, resume_id, job_id, score, recommendation)
-            added = _maybe_add_to_sheet(
-                job, match_id, score, recommendation, threshold, dry_run, conn
-            )
+            try:
+                added = _maybe_add_to_sheet(
+                    job, match_id, score, recommendation, threshold, dry_run, conn
+                )
+            except Exception:
+                break
             results.append(
                 {
                     **job,
