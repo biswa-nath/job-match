@@ -6,12 +6,8 @@ from rich.console import Console
 from rich.table import Table
 
 import config
-from browser.linkedin import (
-    login,
-    create_scraping_browser,
-    get_saved_jobs,
-    extract_job_details,
-)
+from browser import get_browser
+from browser.base import JobBoardBrowser
 from db.database import (
     get_connection,
     init_db,
@@ -25,6 +21,17 @@ from matcher.llm_matcher import match_job
 from sheets.google_sheets import append_job_row
 
 console = Console()
+
+
+def _parse_sources(source: str) -> list[str]:
+    source = source.strip().lower()
+    if source == "all":
+        return config.SUPPORTED_SOURCES
+    return [
+        s.strip().lower()
+        for s in source.split(":")
+        if s.strip().lower() in config.SUPPORTED_SOURCES
+    ]
 
 
 def _maybe_add_to_sheet(
@@ -60,69 +67,26 @@ def _maybe_add_to_sheet(
     return True
 
 
-@click.command()
-@click.option(
-    "--resume",
-    default=config.DEFAULT_RESUME,
-    show_default=True,
-    help="Path to resume file (plain text or Markdown).",
-)
-@click.option(
-    "--threshold",
-    default=config.DEFAULT_THRESHOLD,
-    show_default=True,
-    type=int,
-    help="Minimum match score (%) to add job to Google Sheet.",
-)
-@click.option(
-    "--dry-run",
-    is_flag=True,
-    default=False,
-    help="Score jobs but do not write to Google Sheet.",
-)
-def main(resume: str, threshold: int, dry_run: bool) -> None:
-    """
-    Scan LinkedIn saved jobs, score against resume, and add high
-    matches to Google Sheet.
-    """
-
-    # Load resume
-    try:
-        with open(resume) as f:
-            resume_text = f.read().strip()
-    except FileNotFoundError:
-        console.print(f"[red]Resume file not found:[/red] {resume}")
-        sys.exit(1)
-
-    if not resume_text or resume_text.startswith("<!--"):
-        console.print(
-            "[red]Resume file appears empty or is still a placeholder.[/red]\n"
-            f"Please fill in {resume} with your actual resume content."
-        )
-        sys.exit(1)
-
-    if dry_run:
-        console.print(
-            "[yellow]Dry-run mode: no rows will be written to Google Sheet.[/yellow]"
-        )
-
-    # Connect to DB and ensure schema exists
-    conn = get_connection()
-    init_db(conn)
-    resume_id = get_or_create_resume(conn, resume_text)
-    console.print(f"[dim]Resume id: {resume_id}[/dim]")
-
+def _run_source(
+    browser: JobBoardBrowser,
+    resume_id: int,
+    resume_text: str,
+    conn,
+    threshold: int,
+    dry_run: bool,
+) -> list[dict]:
+    """Run the scrape+match pipeline for one job board. Returns results."""
     results = []
 
     with sync_playwright() as pw:
-        login(pw)  # headed — validates/saves session, then closes browser
-        context, page = create_scraping_browser(pw)  # headless — scraping only
+        browser.login(pw)
+        context, page = browser.create_scraping_browser(pw)
 
-        saved_jobs = get_saved_jobs(page)
+        saved_jobs = browser.get_saved_jobs(page)
         if not saved_jobs:
-            console.print("[yellow]No saved jobs found.[/yellow]")
-            conn.close()
-            return
+            console.print(f"[yellow]No saved jobs found on {browser.name}.[/yellow]")
+            context.browser.close()
+            return results
 
         for job_stub in saved_jobs:
             console.print(f"\n[cyan]Processing:[/cyan] {job_stub['url']}")
@@ -156,12 +120,13 @@ def main(resume: str, threshold: int, dry_run: bool) -> None:
                         "recommendation": recommendation,
                         "cached": True,
                         "added": added or existing["added_to_sheet"],
+                        "source": browser.name,
                     }
                 )
                 continue
 
             try:
-                job = extract_job_details(page, job_stub)
+                job = browser.extract_job_details(page, job_stub)
             except Exception as e:
                 console.print(f"[red]Failed to extract details:[/red] {e}")
                 continue
@@ -188,23 +153,103 @@ def main(resume: str, threshold: int, dry_run: bool) -> None:
                     "recommendation": recommendation,
                     "cached": False,
                     "added": added,
+                    "source": browser.name,
                 }
             )
 
         context.browser.close()
 
+    return results
+
+
+@click.command()
+@click.option(
+    "--resume",
+    default=config.DEFAULT_RESUME,
+    show_default=True,
+    help="Path to resume file (plain text or Markdown).",
+)
+@click.option(
+    "--threshold",
+    default=config.DEFAULT_THRESHOLD,
+    show_default=True,
+    type=int,
+    help="Minimum match score (%) to add job to Google Sheet.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Score jobs but do not write to Google Sheet.",
+)
+@click.option(
+    "--source",
+    default="linkedin",
+    show_default=True,
+    help=(
+        "Job board(s) to scrape. Options: linkedin, indeed, all, "
+        "or colon-separated list (e.g. linkedin:indeed)."
+    ),
+)
+def main(resume: str, threshold: int, dry_run: bool, source: str) -> None:
+    """
+    Scan saved jobs from LinkedIn or Indeed, score against resume,
+    and add high matches to Google Sheet.
+    """
+
+    sources = _parse_sources(source)
+    for s in sources:
+        if s not in config.SUPPORTED_SOURCES:
+            console.print(
+                f"[red]Unknown source '{s}'.[/red] "
+                f"Supported: {', '.join(config.SUPPORTED_SOURCES)}"
+            )
+            sys.exit(1)
+
+    try:
+        with open(resume) as f:
+            resume_text = f.read().strip()
+    except FileNotFoundError:
+        console.print(f"[red]Resume file not found:[/red] {resume}")
+        sys.exit(1)
+
+    if not resume_text or resume_text.startswith("<!--"):
+        console.print(
+            "[red]Resume file appears empty or is still a placeholder.[/red]\n"
+            f"Please fill in {resume} with your actual resume content."
+        )
+        sys.exit(1)
+
+    if dry_run:
+        console.print(
+            "[yellow]Dry-run mode: no rows will be written to Google Sheet.[/yellow]"
+        )
+
+    conn = get_connection()
+    init_db(conn)
+    resume_id = get_or_create_resume(conn, resume_text)
+    console.print(f"[dim]Resume id: {resume_id}[/dim]")
+
+    all_results = []
+    for source_name in sources:
+        console.print(f"\n[bold]--- Scraping {source_name} ---[/bold]")
+        browser = get_browser(source_name)
+        all_results.extend(
+            _run_source(browser, resume_id, resume_text, conn, threshold, dry_run)
+        )
+
     conn.close()
 
-    # Summary table
     console.print("\n")
     table = Table(title="Job Match Summary", show_lines=True)
     table.add_column("Position", style="bold")
     table.add_column("Company")
+    table.add_column("Source")
     table.add_column("Score", justify="right")
     table.add_column("Cached", justify="center")
     table.add_column("In Sheet", justify="center")
 
-    for r in sorted(results, key=lambda x: x["score"], reverse=True):
+    for r in sorted(all_results, key=lambda x: x["score"], reverse=True):
         score_str = (
             f"[green]{r['score']}%[/green]"
             if r["score"] >= threshold
@@ -215,6 +260,7 @@ def main(resume: str, threshold: int, dry_run: bool) -> None:
         table.add_row(
             r.get("position", ""),
             r.get("company", ""),
+            r.get("source", ""),
             score_str,
             cached_str,
             in_sheet_str,

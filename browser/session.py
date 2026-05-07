@@ -17,11 +17,3 @@ def load_cookies(context, path: str) -> bool:
         cookies = json.load(f)
     context.add_cookies(cookies)
     return True
-
-
-def is_session_valid(page) -> bool:
-    """Check if the current LinkedIn session is still active."""
-    page.goto(
-        "https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=15000
-    )
-    return "feed" in page.url and "login" not in page.url
