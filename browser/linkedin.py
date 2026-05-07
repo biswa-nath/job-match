@@ -1,7 +1,7 @@
 import re
 import time
 
-from playwright.sync_api import Page
+from playwright.sync_api import Page, TimeoutError
 from rich.console import Console
 
 from browser.base import JobBoardBrowser
@@ -62,9 +62,12 @@ class LinkedInBrowser(JobBoardBrowser):
         seen: set[str] = set()
 
         while True:
-            page.wait_for_selector(
-                "a[href*='/jobs/view/']", state="attached", timeout=15_000
-            )
+            try:
+                page.wait_for_selector(
+                    "a[href*='/jobs/view/']", state="attached", timeout=15_000
+                )
+            except TimeoutError:
+                break
 
             cards = page.evaluate("""() => {
                 const seen = new Set();

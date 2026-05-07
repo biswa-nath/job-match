@@ -24,9 +24,14 @@ console = Console()
 
 
 def _parse_sources(source: str) -> list[str]:
+    source = source.strip().lower()
     if source == "all":
         return config.SUPPORTED_SOURCES
-    return [s.strip().lower() for s in source.split(":")]
+    return [
+        s.strip().lower()
+        for s in source.split(":")
+        if s.strip().lower() in config.SUPPORTED_SOURCES
+    ]
 
 
 def _maybe_add_to_sheet(

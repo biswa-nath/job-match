@@ -69,8 +69,9 @@ class JobBoardBrowser(ABC):
                     console.print(f"[green]{self.name} session is valid.[/green]")
                     browser.close()
                     return
-            except Exception:
-                pass
+            except Exception as e:
+                console.print(f"[red]Error checking {self.name} session:[/red] {e}")
+
             console.print(
                 f"[yellow]{self.name} session expired. Starting fresh login.[/yellow]"
             )
@@ -82,10 +83,11 @@ class JobBoardBrowser(ABC):
         page.goto(self.login_url, wait_until="domcontentloaded")
         # wait_for_function polls via JS — more reliable than wait_for_url for
         # OAuth/SPA flows where Playwright navigation events may not fire
+        login_exclude = self._login_excluded_patterns or self.login_url
         js_cond = " && ".join(
-            f"!window.location.href.includes({json.dumps(p)})"
-            for p in self._login_excluded_patterns
+            f"!window.location.href.includes({json.dumps(p)})" for p in login_exclude
         )
+
         page.wait_for_function(f"() => {js_cond}", timeout=120_000)
         console.print(f"[green]{self.name} login detected. Saving session.[/green]")
         save_cookies(context, self.session_file)

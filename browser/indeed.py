@@ -1,7 +1,7 @@
 import re
 import time
 
-from playwright.sync_api import Page
+from playwright.sync_api import Page, TimeoutError
 from rich.console import Console
 
 from browser.base import JobBoardBrowser
@@ -59,7 +59,7 @@ class IndeedBrowser(JobBoardBrowser):
                 page.wait_for_selector(
                     "ul.atw-Updates-list", state="attached", timeout=15_000
                 )
-            except Exception:
+            except TimeoutError:
                 break
 
             cards = page.evaluate("""() => {
@@ -168,8 +168,6 @@ class IndeedBrowser(JobBoardBrowser):
                 }
                 return '';
             }""")
-
-        console.print(f"[cyan]Job description extracted.[/cyan] {description}\n")
 
         return {**job, "description": description}
 
