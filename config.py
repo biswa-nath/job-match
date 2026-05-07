@@ -11,7 +11,11 @@ DEFAULT_THRESHOLD = 60
 # e.g. "claude/claude-sonnet-4-6", "gpt-4o", "ollama/llama3"
 LLM_MODEL = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-6")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
-SESSION_FILE = "session.json"
+SUPPORTED_SOURCES = ["linkedin", "indeed"]
+SESSION_FILES = {
+    "linkedin": "linkedin_session.json",
+    "indeed": "indeed_session.json",
+}
 GOOGLE_CREDS_FILE = "credentials.json"
 GOOGLE_TOKEN_FILE = "token.json"
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
