@@ -1,10 +1,20 @@
-*_session.json
-credentials.json
-token.json
-resume.txt
+# Runtime data files — never commit sessions, tokens, credentials or resume
+data/*_session.json
+data/credentials.json
+data/token.json
+data/resume.txt
+
+.claude/settings.local.json
 .env
 __pycache__/
 *.pyc
 *.pyo
 .venv/
 venv/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+infra/terraform.tfvars

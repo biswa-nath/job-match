@@ -1,6 +1,7 @@
 import sys
 
 import click
+from google.auth.exceptions import RefreshError
 from playwright.sync_api import sync_playwright
 from rich.console import Console
 from rich.table import Table
@@ -18,6 +19,7 @@ from db.database import (
     mark_added_to_sheet,
 )
 from matcher.llm_matcher import match_job
+from notifications import notify
 from sheets.google_sheets import append_job_row
 
 console = Console()
@@ -45,7 +47,7 @@ def _maybe_add_to_sheet(
 ) -> bool:
     """
     Append to Google Sheet if score >= threshold and not already added.
-    Returns True if added (or would have been added in dry-run).
+    Returns True if added. Raises on Sheets/DB errors (caller decides how to handle).
     """
     if score < threshold:
         return False
@@ -74,12 +76,43 @@ def _run_source(
     conn,
     threshold: int,
     dry_run: bool,
+    headless_only: bool = False,
 ) -> list[dict]:
     """Run the scrape+match pipeline for one job board. Returns results."""
     results = []
+    sheets_auth_failed = False
+
+    def _add_to_sheet(job, match_id, score, recommendation):
+        """Wraps _maybe_add_to_sheet with RefreshError isolation so a stale
+        Google token doesn't abort the entire run."""
+        nonlocal sheets_auth_failed
+        if sheets_auth_failed:
+            return False
+        try:
+            return _maybe_add_to_sheet(
+                job, match_id, score, recommendation, threshold, dry_run, conn
+            )
+        except RefreshError:
+            notify(
+                f"Google Sheets token has expired or is missing. "
+                f"Re-authenticate locally and upload {config.GOOGLE_TOKEN_FILE}."
+            )
+            sheets_auth_failed = True
+            return False
+        # Other exceptions propagate → caller's `except Exception: break`
 
     with sync_playwright() as pw:
-        browser.login(pw)
+        if headless_only:
+            if not browser.check_session_headless(pw):
+                notify(
+                    f"{browser.name} session is invalid or expired. "
+                    f"Run `uv run job-matcher --source {browser.name}` locally to "
+                    f"log in and refresh {browser.session_file}."
+                )
+                return results
+        else:
+            browser.login(pw)
+
         context, page = browser.create_scraping_browser(pw)
 
         saved_jobs = browser.get_saved_jobs(page)
@@ -101,14 +134,8 @@ def _run_source(
                 added = False
                 if not existing["added_to_sheet"]:
                     try:
-                        added = _maybe_add_to_sheet(
-                            job_stub,
-                            existing["id"],
-                            score,
-                            recommendation,
-                            threshold,
-                            dry_run,
-                            conn,
+                        added = _add_to_sheet(
+                            job_stub, existing["id"], score, recommendation
                         )
                     except Exception:
                         break
@@ -141,9 +168,7 @@ def _run_source(
             recommendation = match["recommendation"]
             match_id = save_match(conn, resume_id, job_id, score, recommendation)
             try:
-                added = _maybe_add_to_sheet(
-                    job, match_id, score, recommendation, threshold, dry_run, conn
-                )
+                added = _add_to_sheet(job, match_id, score, recommendation)
             except Exception:
                 break
             results.append(
@@ -191,20 +216,32 @@ def _run_source(
         "or colon-separated list (e.g. linkedin:indeed)."
     ),
 )
-def main(resume: str, threshold: int, dry_run: bool, source: str) -> None:
+@click.option(
+    "--headless-only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Skip browser login. If session is invalid, sends an alert instead of "
+        "opening a browser. Automatically enabled when LAMBDA_MODE=1."
+    ),
+)
+def main(
+    resume: str, threshold: int, dry_run: bool, source: str, headless_only: bool
+) -> None:
     """
     Scan saved jobs from LinkedIn or Indeed, score against resume,
     and add high matches to Google Sheet.
     """
+    # LAMBDA_MODE env var implies headless-only behaviour
+    effective_headless_only = headless_only or config.LAMBDA_MODE
 
     sources = _parse_sources(source)
-    for s in sources:
-        if s not in config.SUPPORTED_SOURCES:
-            console.print(
-                f"[red]Unknown source '{s}'.[/red] "
-                f"Supported: {', '.join(config.SUPPORTED_SOURCES)}"
-            )
-            sys.exit(1)
+    if not sources:
+        console.print(
+            f"[red]No valid sources in '{source}'.[/red] "
+            f"Supported: {', '.join(config.SUPPORTED_SOURCES)}"
+        )
+        sys.exit(1)
 
     try:
         with open(resume) as f:
@@ -224,6 +261,10 @@ def main(resume: str, threshold: int, dry_run: bool, source: str) -> None:
         console.print(
             "[yellow]Dry-run mode: no rows will be written to Google Sheet.[/yellow]"
         )
+    if effective_headless_only:
+        console.print(
+            "[dim]Headless-only mode: browser login will not be attempted.[/dim]"
+        )
 
     conn = get_connection()
     init_db(conn)
@@ -235,7 +276,15 @@ def main(resume: str, threshold: int, dry_run: bool, source: str) -> None:
         console.print(f"\n[bold]--- Scraping {source_name} ---[/bold]")
         browser = get_browser(source_name)
         all_results.extend(
-            _run_source(browser, resume_id, resume_text, conn, threshold, dry_run)
+            _run_source(
+                browser,
+                resume_id,
+                resume_text,
+                conn,
+                threshold,
+                dry_run,
+                headless_only=effective_headless_only,
+            )
         )
 
     conn.close()

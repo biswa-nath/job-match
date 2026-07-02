@@ -49,9 +49,24 @@ class JobBoardBrowser(ABC):
         context = browser.new_context()
         return browser, context
 
+    @staticmethod
+    def _container_args() -> list[str]:
+        """Extra Chromium flags required when running inside Lambda / containers."""
+        if not config.LAMBDA_MODE:
+            return []
+        console.print("[dim] In _container_args().[/dim]")
+        return [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--no-zygote",
+        ]
+
     def _make_scraping_context(self, playwright: Playwright) -> tuple:
         """Create a headless browser + context for scraping. Override to customise."""
-        browser = playwright.chromium.launch(headless=True)
+        console.print("[dim] In _make_scraping_context().[/dim]")
+        browser = playwright.chromium.launch(headless=True, args=self._container_args())
         context = browser.new_context()
         return browser, context
 
@@ -92,6 +107,22 @@ class JobBoardBrowser(ABC):
         console.print(f"[green]{self.name} login detected. Saving session.[/green]")
         save_cookies(context, self.session_file)
         browser.close()
+
+    def check_session_headless(self, playwright: Playwright) -> bool:
+        """
+        Check session validity without a headed browser.
+        Used in headless-only / Lambda mode instead of login().
+        """
+        console.print(f"[dim]Checking {self.name} session validity[/dim]")
+        _browser, context = self._make_scraping_context(playwright)
+        page = context.new_page()
+        try:
+            load_cookies(context, self.session_file)
+            return self._is_session_valid(page)
+        except Exception:
+            return False
+        finally:
+            context.browser.close()
 
     def create_scraping_browser(
         self, playwright: Playwright

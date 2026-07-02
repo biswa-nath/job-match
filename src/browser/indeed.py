@@ -4,6 +4,7 @@ import time
 from playwright.sync_api import Page, TimeoutError
 from rich.console import Console
 
+import config
 from browser.base import JobBoardBrowser
 
 console = Console()
@@ -36,10 +37,16 @@ class IndeedBrowser(JobBoardBrowser):
         return browser, context
 
     def _make_scraping_context(self, playwright):
+        # Lambda has no system Chrome — fall back to Playwright Chromium.
+        # Valid session cookies make Cloudflare much less aggressive during scraping.
+        kwargs = {} if config.LAMBDA_MODE else {"channel": "chrome"}
         browser = playwright.chromium.launch(
-            channel="chrome",
             headless=True,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                *self._container_args(),
+            ],
+            **kwargs,
         )
         context = browser.new_context()
         context.add_init_script(_STEALTH_SCRIPT)

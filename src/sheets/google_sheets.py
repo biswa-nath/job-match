@@ -1,5 +1,6 @@
 import os
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -24,6 +25,11 @@ def get_sheets_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            if config.LAMBDA_MODE:
+                raise RefreshError(
+                    f"Google Sheets token missing or fully expired. "
+                    f"Re-authenticate locally and upload {config.GOOGLE_TOKEN_FILE} to EFS."
+                )
             if not os.path.exists(config.GOOGLE_CREDS_FILE):
                 raise FileNotFoundError(
                     f"Google OAuth2 credentials not found: {config.GOOGLE_CREDS_FILE}\n"
