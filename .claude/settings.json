@@ -27,10 +27,6 @@
       "Bash(git reset --hard *)"
     ]
   },
-  "hooks": {
-    "beforeBash": "echo 'Executing: ${{command}}'",
-    "afterBash": "echo 'Executed: ${{command}}'"
-  },
   "attribution": {
     "commit": "",
     "PR": ""

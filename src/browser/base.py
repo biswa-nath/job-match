@@ -54,7 +54,6 @@ class JobBoardBrowser(ABC):
         """Extra Chromium flags required when running inside Lambda / containers."""
         if not config.LAMBDA_MODE:
             return []
-        console.print("[dim] In _container_args().[/dim]")
         return [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -65,7 +64,6 @@ class JobBoardBrowser(ABC):
 
     def _make_scraping_context(self, playwright: Playwright) -> tuple:
         """Create a headless browser + context for scraping. Override to customise."""
-        console.print("[dim] In _make_scraping_context().[/dim]")
         browser = playwright.chromium.launch(headless=True, args=self._container_args())
         context = browser.new_context()
         return browser, context

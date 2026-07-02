@@ -69,4 +69,13 @@ If the error persists after re-auth, the OAuth2 client credentials themselves ma
 
 ## Key files not committed to git
 
-`*_session.json` (LinkedIn/Indeed cookies), `credentials.json` (Google OAuth2 client), `token.json` (Google OAuth2 token), `resume.txt`, `.env`.
+All of these are excluded by `.gitignore` using unpathed patterns, so they are protected whether they sit at the project root or inside `data/`:
+
+| File | Purpose |
+|------|---------|
+| `*_session.json` | LinkedIn / Indeed browser cookies |
+| `credentials.json` | Google OAuth2 client secrets |
+| `token.json` | Google OAuth2 cached token |
+| `resume.txt` | Resume content |
+| `.env` | Environment variables (DB URL, API keys, etc.) |
+| `infra/terraform.tfvars` | Terraform variable values (API keys, ARNs) |

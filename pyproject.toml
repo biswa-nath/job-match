@@ -26,6 +26,13 @@ job-matcher = "main:main"
 # so the editable install adds src/ to sys.path — making browser/, db/,
 # and standalone modules (main.py, config.py, etc.) all importable unchanged.
 packages = ["src/browser", "src/db", "src/matcher", "src/sheets"]
+sources = ["src"]
+include = [
+    "src/main.py",
+    "src/config.py",
+    "src/lambda_handler.py",
+    "src/notifications.py",
+]
 
 [tool.uv]
 package = true

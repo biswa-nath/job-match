@@ -29,11 +29,11 @@ def _parse_sources(source: str) -> list[str]:
     source = source.strip().lower()
     if source == "all":
         return config.SUPPORTED_SOURCES
-    return [
-        s.strip().lower()
-        for s in source.split(":")
-        if s.strip().lower() in config.SUPPORTED_SOURCES
-    ]
+    parts = [s.strip().lower() for s in source.split(":")]
+    unknown = [s for s in parts if s not in config.SUPPORTED_SOURCES]
+    for s in unknown:
+        console.print(f"[yellow]Unknown source '{s}' ignored.[/yellow]")
+    return [s for s in parts if s in config.SUPPORTED_SOURCES]
 
 
 def _maybe_add_to_sheet(
