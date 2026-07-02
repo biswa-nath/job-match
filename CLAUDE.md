@@ -52,6 +52,30 @@ The entry point is `main.py` (`job-matcher` CLI command via `main:main`). All co
 - Both the login and scraping browsers use `channel="chrome"` (system Chrome) to pass Cloudflare's bot detection. The `--disable-blink-features=AutomationControlled` flag and a `navigator.webdriver = undefined` init script are also applied.
 - On first run a headed Chrome window opens for manual login; session cookies are saved to `indeed_session.json`.
 
+## Troubleshooting
+
+### Google Sheets: `invalid_grant: Bad Request`
+
+The cached OAuth2 token has expired or been revoked. Delete it and trigger the OAuth flow directly from your terminal:
+
+```bash
+rm data/token.json
+uv run python -c "from sheets.google_sheets import get_sheets_service; get_sheets_service()"
+```
+
+A browser window will open — complete the Google authorization there. Once `token.json` is written, `job-matcher` will work again.
+
+If the error persists after re-auth, the OAuth2 client credentials themselves may have been revoked — regenerate `credentials.json` from the Google Cloud Console.
+
 ## Key files not committed to git
 
-`*_session.json` (LinkedIn/Indeed cookies), `credentials.json` (Google OAuth2 client), `token.json` (Google OAuth2 token), `resume.txt`, `.env`.
+All of these are excluded by `.gitignore` using unpathed patterns, so they are protected whether they sit at the project root or inside `data/`:
+
+| File | Purpose |
+|------|---------|
+| `*_session.json` | LinkedIn / Indeed browser cookies |
+| `credentials.json` | Google OAuth2 client secrets |
+| `token.json` | Google OAuth2 cached token |
+| `resume.txt` | Resume content |
+| `.env` | Environment variables (DB URL, API keys, etc.) |
+| `infra/terraform.tfvars` | Terraform variable values (API keys, ARNs) |

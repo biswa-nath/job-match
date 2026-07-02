@@ -1,10 +1,21 @@
+# Runtime data files — never commit sessions, tokens, credentials or resume
+# Unpathed patterns cover both the project root (legacy location) and any subdirectory
 *_session.json
 credentials.json
 token.json
 resume.txt
+
+.claude/settings.local.json
 .env
 __pycache__/
 *.pyc
 *.pyo
 .venv/
 venv/
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+infra/terraform.tfvars
