@@ -10,14 +10,13 @@ uv sync
 uv run playwright install chromium
 uv run pre-commit install # Dev environment
 
-# Run the tool
-uv run job-matcher                        # LinkedIn only (default)
-uv run job-matcher --source indeed        # Indeed only
-uv run job-matcher --source linkedin:indeed  # both sources
-uv run job-matcher --source all           # all supported sources
-uv run job-matcher --dry-run             # score jobs without writing to Google Sheet
-uv run job-matcher --threshold 60        # override match threshold
-uv run job-matcher --resume my_cv.txt
+# Run the tool (--resume is required and must be a PDF)
+uv run job-matcher --resume my_cv.pdf                        # LinkedIn only (default)
+uv run job-matcher --resume my_cv.pdf --source indeed        # Indeed only
+uv run job-matcher --resume my_cv.pdf --source linkedin:indeed  # both sources
+uv run job-matcher --resume my_cv.pdf --source all           # all supported sources
+uv run job-matcher --resume my_cv.pdf --dry-run              # score jobs without writing to Google Sheet
+uv run job-matcher --resume my_cv.pdf --threshold 60         # override match threshold
 
 # Lint and format
 uv run ruff check --fix .
@@ -31,8 +30,9 @@ There are no automated tests. Pre-commit hooks run ruff on commit.
 The entry point is `main.py` (`job-matcher` CLI command via `main:main`). All configuration is loaded from `.env` via `config.py`, which is imported by every module.
 
 **Data flow for each job:**
+0. `resume.py` — `extract_pdf(path)` pulls text from the PDF via pdfplumber; `redact(text)` strips PII (name, email, phone, SSN) using Presidio + spaCy. The redacted text is what gets stored and sent to the LLM.
 1. `browser/` — OOD browser layer. `JobBoardBrowser` (in `base.py`) is the abstract base class; it implements the shared `login()` and `create_scraping_browser()` methods and defines the `_make_headed_context()` / `_make_scraping_context()` hooks that subclasses override to customise browser launch options. `LinkedInBrowser` and `IndeedBrowser` extend it, each implementing `get_saved_jobs()` and `extract_job_details()`. `browser/__init__.py` exports `get_browser(source)` which instantiates the right class. `config.SUPPORTED_SOURCES` lists valid source names; `config.SESSION_FILES` maps each to its cookie file.
-2. `db/database.py` — PostgreSQL via psycopg2. `init_db()` is idempotent (CREATE IF NOT EXISTS + ALTER ADD COLUMN IF NOT EXISTS for migrations). The cache key is `(resume_id, job_id)` in `job_matches`. Resumes are deduplicated by SHA-256 of their text.
+2. `db/database.py` — PostgreSQL via psycopg2. `init_db()` is idempotent (CREATE IF NOT EXISTS + ALTER ADD COLUMN IF NOT EXISTS for migrations). The cache key is `(resume_id, job_id)` in `job_matches`. Resumes are deduplicated by SHA-256 of their redacted text.
 3. `matcher/llm_matcher.py` — calls LiteLLM with the resume text and job dict, expects a `{"score": int, "recommendation": str}` JSON response. `config.LLM_MODEL` controls the provider (default: `anthropic/claude-sonnet-4-6`).
 4. `sheets/google_sheets.py` — appends a row to the configured Google Sheet tab (`Sheet1` by default). OAuth2 credentials in `credentials.json`; token cached in `token.json`.
 
@@ -76,6 +76,6 @@ All of these are excluded by `.gitignore` using unpathed patterns, so they are p
 | `*_session.json` | LinkedIn / Indeed browser cookies |
 | `credentials.json` | Google OAuth2 client secrets |
 | `token.json` | Google OAuth2 cached token |
-| `resume.txt` | Resume content |
-| `.env` | Environment variables (DB URL, API keys, etc.) |
+| `*.pdf` | Resume PDF (pass path via `--resume`) |
+| `.env` | Environment variables (DB URL, API keys, `RESUME_PATH` for Lambda, etc.) |
 | `infra/terraform.tfvars` | Terraform variable values (API keys, ARNs) |
