@@ -30,6 +30,16 @@ REDACT_ALLOW_LIST = [
     "Ansible",
     "Jenkins",
     "Grafana",
+    # Certification / credential platforms
+    "Credly",
+    "Coursera",
+    "Pluralsight",
+    # Geographic abbreviations that spaCy reads as "Initial Surname"
+    # (e.g. "N. Virginia" in an AWS migration context)
+    "N. Virginia",
+    "S. Korea",
+    "N. California",
+    "S. California",
     # Resume action verbs — capitalised at the start of bullet lines
     "Architected",
     "Built",
@@ -94,6 +104,20 @@ _NON_NAME_WORDS = frozenset(
         "ceo",
         "coo",
         "cpo",
+        # Common English adjectives / business words mistaken for names
+        "direct",
+        "global",
+        "general",
+        "digital",
+        # Industry portmanteaus (e.g. "Direct AdTech experience")
+        "adtech",
+        "martech",
+        "fintech",
+        "proptech",
+        "edtech",
+        "healthtech",
+        "legaltech",
+        "insurtech",
     }
 )
 
@@ -254,6 +278,13 @@ def _trim_person_spans(text: str, results: list) -> list:
 
             if span_start >= span_end:
                 continue  # trimmed to nothing — drop the entity
+            # Drop entities where every remaining word is a known non-name word
+            # e.g. "Direct AdTech" → trailing trim → "Direct" → all non-name → drop
+            remaining_words = text[span_start:span_end].split()
+            if remaining_words and all(
+                w.lower().strip(".,;:|") in _NON_NAME_WORDS for w in remaining_words
+            ):
+                continue
             if span_start != r.start or span_end != r.end:
                 r = RecognizerResult(r.entity_type, span_start, span_end, r.score)
         trimmed.append(r)
