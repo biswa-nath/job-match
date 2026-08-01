@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from rich.console import Console
 
 console = Console(stderr=True)
@@ -21,6 +23,13 @@ REDACT_ALLOW_LIST = [
     "Copilot",
     "Grok",
     "Nova",
+    # DevOps / infrastructure tools that spaCy tags as PERSON
+    "Docker",
+    "Kubernetes",
+    "Terraform",
+    "Ansible",
+    "Jenkins",
+    "Grafana",
     # Resume action verbs — capitalised at the start of bullet lines
     "Architected",
     "Built",
@@ -131,7 +140,19 @@ def extract_pdf(path: str) -> str:
             f"[yellow]Warning: {failed}/{total} PDF pages could not be extracted[/]"
         )
 
-    return "\n\n".join(texts)
+    return _normalize_pdf_text("\n\n".join(texts))
+
+
+def _normalize_pdf_text(text: str) -> str:
+    """Replace PDF Private Use Area glyph characters with standard equivalents.
+
+    pdfplumber maps PDF font glyphs (e.g. Wingdings bullets) into the Unicode
+    PUA range U+E000–U+F8FF. U+F0B7 is the most common bullet; spaCy's NER
+    includes these chars in entity spans, causing allow_list exact-match to fail
+    (span is ' Architected', not 'Architected').
+    """
+    text = text.replace("", "•")  # Wingdings bullet → standard bullet
+    return re.sub("[-]", " ", text)  # remaining PUA range → space
 
 
 def redact(text: str, entities: list[str] | None = None) -> str:
@@ -154,6 +175,24 @@ def redact(text: str, entities: list[str] | None = None) -> str:
     results = analyzer.analyze(
         text=text, entities=entities, language="en", allow_list=REDACT_ALLOW_LIST
     )
+
+    # Presidio's allow_list does an exact re.match on the entity span text.
+    # After PUA normalization, PERSON spans may still include a leading bullet or
+    # space (e.g. "• Architected"), so the exact match misses them. Also drop
+    # PERSON spans whose text contains no ASCII letters (residual bullet chars).
+    # Non-PERSON entities (phone, email, SSN) are not affected.
+    _allow_lower = {s.lower() for s in REDACT_ALLOW_LIST}
+    results = [
+        r
+        for r in results
+        if r.entity_type != "PERSON"
+        or (
+            any(c.isascii() and c.isalpha() for c in text[r.start : r.end])
+            and re.sub(r"^[^a-zA-Z]+", "", text[r.start : r.end]).lower()
+            not in _allow_lower
+        )
+    ]
+
     results = _trim_person_spans(text, results)
 
     operators = {
