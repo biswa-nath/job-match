@@ -262,7 +262,11 @@ def main(
         sys.exit(1)
 
     console.print("[dim]Redacting PII…[/dim]")
-    resume_text = redact(raw_text)
+    try:
+        resume_text = redact(raw_text)
+    except Exception as e:
+        console.print(f"[red]PII redaction failed:[/red] {e}")
+        sys.exit(1)
 
     if dry_run:
         console.print(
@@ -274,27 +278,28 @@ def main(
         )
 
     conn = get_connection()
-    init_db(conn)
-    resume_id = get_or_create_resume(conn, resume_text)
-    console.print(f"[dim]Resume id: {resume_id}[/dim]")
+    try:
+        init_db(conn)
+        resume_id = get_or_create_resume(conn, resume_text)
+        console.print(f"[dim]Resume id: {resume_id}[/dim]")
 
-    all_results = []
-    for source_name in sources:
-        console.print(f"\n[bold]--- Scraping {source_name} ---[/bold]")
-        browser = get_browser(source_name)
-        all_results.extend(
-            _run_source(
-                browser,
-                resume_id,
-                resume_text,
-                conn,
-                threshold,
-                dry_run,
-                headless_only=effective_headless_only,
+        all_results = []
+        for source_name in sources:
+            console.print(f"\n[bold]--- Scraping {source_name} ---[/bold]")
+            browser = get_browser(source_name)
+            all_results.extend(
+                _run_source(
+                    browser,
+                    resume_id,
+                    resume_text,
+                    conn,
+                    threshold,
+                    dry_run,
+                    headless_only=effective_headless_only,
+                )
             )
-        )
-
-    conn.close()
+    finally:
+        conn.close()
 
     console.print("\n")
     table = Table(title="Job Match Summary", show_lines=True)
