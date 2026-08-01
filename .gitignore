@@ -4,6 +4,7 @@
 credentials.json
 token.json
 resume.txt
+*.pdf
 
 .claude/settings.local.json
 .env

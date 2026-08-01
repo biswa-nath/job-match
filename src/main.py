@@ -20,6 +20,7 @@ from db.database import (
 )
 from matcher.llm_matcher import match_job
 from notifications import notify
+from resume import extract_pdf, redact
 from sheets.google_sheets import append_job_row
 
 console = Console()
@@ -190,9 +191,8 @@ def _run_source(
 @click.command()
 @click.option(
     "--resume",
-    default=config.DEFAULT_RESUME,
-    show_default=True,
-    help="Path to resume file (plain text or Markdown).",
+    required=True,
+    help="Path to resume PDF.",
 )
 @click.option(
     "--threshold",
@@ -243,18 +243,29 @@ def main(
         )
         sys.exit(1)
 
+    if not resume.lower().endswith(".pdf"):
+        console.print(f"[red]--resume must point to a PDF file:[/red] {resume}")
+        sys.exit(1)
+
     try:
-        with open(resume) as f:
-            resume_text = f.read().strip()
+        console.print(f"[dim]Extracting text from {resume}…[/dim]")
+        raw_text = extract_pdf(resume)
     except FileNotFoundError:
         console.print(f"[red]Resume file not found:[/red] {resume}")
         sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Failed to read PDF:[/red] {e}")
+        sys.exit(1)
 
-    if not resume_text or resume_text.startswith("<!--"):
-        console.print(
-            "[red]Resume file appears empty or is still a placeholder.[/red]\n"
-            f"Please fill in {resume} with your actual resume content."
-        )
+    if not raw_text.strip():
+        console.print(f"[red]No text could be extracted from:[/red] {resume}")
+        sys.exit(1)
+
+    console.print("[dim]Redacting PII…[/dim]")
+    try:
+        resume_text = redact(raw_text)
+    except Exception as e:
+        console.print(f"[red]PII redaction failed:[/red] {e}")
         sys.exit(1)
 
     if dry_run:
@@ -267,27 +278,28 @@ def main(
         )
 
     conn = get_connection()
-    init_db(conn)
-    resume_id = get_or_create_resume(conn, resume_text)
-    console.print(f"[dim]Resume id: {resume_id}[/dim]")
+    try:
+        init_db(conn)
+        resume_id = get_or_create_resume(conn, resume_text)
+        console.print(f"[dim]Resume id: {resume_id}[/dim]")
 
-    all_results = []
-    for source_name in sources:
-        console.print(f"\n[bold]--- Scraping {source_name} ---[/bold]")
-        browser = get_browser(source_name)
-        all_results.extend(
-            _run_source(
-                browser,
-                resume_id,
-                resume_text,
-                conn,
-                threshold,
-                dry_run,
-                headless_only=effective_headless_only,
+        all_results = []
+        for source_name in sources:
+            console.print(f"\n[bold]--- Scraping {source_name} ---[/bold]")
+            browser = get_browser(source_name)
+            all_results.extend(
+                _run_source(
+                    browser,
+                    resume_id,
+                    resume_text,
+                    conn,
+                    threshold,
+                    dry_run,
+                    headless_only=effective_headless_only,
+                )
             )
-        )
-
-    conn.close()
+    finally:
+        conn.close()
 
     console.print("\n")
     table = Table(title="Job Match Summary", show_lines=True)

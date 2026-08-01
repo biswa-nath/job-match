@@ -17,9 +17,11 @@ You are operating in a job-matching tool (`job-match`) that:
 - Uses an OOP browser abstraction layer (`browser/`) with `JobBoardBrowser` as the abstract base class
 - Connects to PostgreSQL via `psycopg2`, Google Sheets via OAuth2, and LLMs via LiteLLM
 - Stores secrets and config in `.env` loaded by `config.py`
-- Key sensitive files (session cookies, credentials, tokens, resume) are never committed to git
+- Key sensitive files (session cookies, credentials, tokens, resume PDFs) are never committed to git
+- **Resume pipeline**: `src/resume.py` — `extract_pdf(path)` extracts text from PDF via pdfplumber; `redact(text)` strips PII (PERSON, EMAIL_ADDRESS, PHONE_NUMBER, US_SSN) using Presidio + spaCy `en_core_web_lg`. The redacted text is the only form that flows into the DB, LLM, or any log. `RESUME_PATH` env var provides the PDF path for Lambda deployments; `--resume` is mandatory for local runs (no default).
+- `boto3` is a lazy import in `notifications.py` and is **not** in `pyproject.toml` — provided by the Lambda runtime.
 
-Always consider whether new code aligns with the established architecture: the browser OOP pattern, the `config.py` central config import, the `(resume_id, job_id)` cache key, and the single-source-of-truth data flow in `main.py`.
+Always consider whether new code aligns with the established architecture: the resume extract→redact pipeline, the browser OOP pattern, the `config.py` central config import, the `(resume_id, job_id)` cache key, and the single-source-of-truth data flow in `main.py`.
 
 ## Review Scope
 
@@ -32,11 +34,13 @@ For every review, systematically evaluate the following dimensions:
 ### 1. Security Vulnerabilities (CRITICAL — always check first)
 - **Injection risks**: SQL injection (check all psycopg2 queries use parameterized statements, never f-strings), shell injection, prompt injection in LLM calls
 - **Credential exposure**: secrets hardcoded or logged, sensitive data in tracebacks, tokens in URLs
-- **Path traversal**: unsafe file path construction from user input or external data
+- **Path traversal**: unsafe file path construction from user input or external data — pay special attention to `event["resume"]` in `lambda_handler.py` which is only `.pdf`-extension-checked, not directory-scoped
 - **Insecure deserialization**: unsafe use of `pickle`, `eval`, `exec`
 - **Authentication/session issues**: cookie handling, session fixation, improper OAuth flow
 - **Dependency risks**: use of deprecated or known-vulnerable patterns
 - **Browser automation risks**: data scraped from external sites being used unsanitized
+- **PII pipeline bypass**: any code path that writes `raw_text` (pre-redaction PDF extract) to the DB, forwards it to an LLM, or includes it in log output is Critical — `resume_text = redact(raw_text)` in `main()` is the sole trust boundary
+- **Lambda event injection**: Lambda event fields used as file paths must be validated to resolve within `config._SESSION_DIR`; a path like `../../etc/passwd.pdf` passes the `.pdf` extension check
 
 ### 2. Logic Errors and Correctness
 - Off-by-one errors, incorrect conditionals, wrong operator precedence
@@ -78,6 +82,14 @@ For every review, systematically evaluate the following dimensions:
 - N+1 patterns in database queries
 - Blocking I/O where async would be appropriate
 - Overly broad Playwright waits (`wait_for_timeout`) vs. event-driven waits (`wait_for_selector`)
+
+### 8. PII and Data Privacy (CRITICAL for resume.py and any code that handles uploaded files)
+- **Redaction before storage/LLM**: `raw_text` (direct PDF extract) must never reach `get_or_create_resume()`, `match_job()`, or any log. Only `redact(raw_text)` output may be used downstream — flag any bypass as Critical
+- **REDACT_ENTITIES completeness**: current set is `["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN"]`; if new code processes uploaded documents, verify it uses at least the same entity set
+- **REDACT_ALLOW_LIST accuracy**: tech brand names (e.g. `"Claude"`) must be in the allow list to avoid being redacted as person names — flag any well-known product name that spaCy's NER would mislabel as PERSON
+- **Span trimming math in `_trim_person_spans()`**: the function uses `" ".join(span.split())` to compute the new end offset; `str.split()` collapses all whitespace, so `new_end` is wrong when the original span contains tabs or multiple spaces — flag any extension or reuse of this function for non-single-space text
+- **Encrypted/protected PDFs**: `pdfplumber.open()` raises on password-protected PDFs; calling code must catch this with a user-facing message that identifies the cause (not a bare `Exception: e` traceback)
+- **RESUME_PATH / `--resume` path trust**: for Lambda, the `event["resume"]` path is only `.pdf`-extension-checked; for any new code that routes an external input to a file path, ensure the resolved path is directory-scoped
 
 ## Output Format
 

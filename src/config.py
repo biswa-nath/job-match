@@ -21,7 +21,10 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 # Set SESSION_DIR to a persistent path (e.g. /mnt/efs) for Lambda deployments.
 # Defaults to "data" so local runs resolve files from the data/ directory.
 _SESSION_DIR = os.getenv("SESSION_DIR", "data")
-DEFAULT_RESUME = os.path.join(_SESSION_DIR, "resume.txt")
+
+# Path to resume PDF. Required for local runs via --resume flag.
+# For Lambda deployments set RESUME_PATH env var (e.g. pointing to EFS).
+RESUME_PATH = os.getenv("RESUME_PATH", "")
 
 SUPPORTED_SOURCES = ["linkedin", "indeed"]
 SESSION_FILES = {
