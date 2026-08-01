@@ -10,8 +10,47 @@ console = Console(stderr=True)
 # location context (e.g. "San Francisco") is useful to the LLM.
 REDACT_ENTITIES = ["PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN"]
 
-# Product/brand names that spaCy's NER mistakenly tags as PERSON.
-REDACT_ALLOW_LIST = ["Claude", "Gemini", "Copilot", "Grok", "Nova"]
+# Strings that Presidio must NOT flag as entities.
+# Includes AI product names and common resume action verbs: both are capitalised
+# when they start a bullet point after a line break, causing spaCy's NER to tag
+# them as proper nouns / person names.
+REDACT_ALLOW_LIST = [
+    # AI product names
+    "Claude",
+    "Gemini",
+    "Copilot",
+    "Grok",
+    "Nova",
+    # Resume action verbs — capitalised at the start of bullet lines
+    "Architected",
+    "Built",
+    "Championed",
+    "Collaborated",
+    "Created",
+    "Delivered",
+    "Deployed",
+    "Designed",
+    "Developed",
+    "Directed",
+    "Drove",
+    "Established",
+    "Founded",
+    "Grew",
+    "Implemented",
+    "Improved",
+    "Increased",
+    "Integrated",
+    "Launched",
+    "Led",
+    "Managed",
+    "Mentored",
+    "Migrated",
+    "Optimized",
+    "Partnered",
+    "Reduced",
+    "Scaled",
+    "Spearheaded",
+]
 
 # Words that spaCy appends to PERSON spans but are not part of a name.
 _NON_NAME_WORDS = frozenset(
@@ -128,30 +167,56 @@ def redact(text: str, entities: list[str] | None = None) -> str:
 
 
 def _trim_person_spans(text: str, results: list) -> list:
-    """Trim trailing non-name tokens (e.g. job title words) from PERSON spans.
+    """Trim leading/trailing non-name tokens from PERSON spans.
 
-    Uses rsplit to avoid whitespace-normalisation bugs: PDF text often contains
-    multi-space gaps from column detection, so split()+join() would compute a
-    shorter length than the original span and leave trailing name characters unredacted.
+    Works in original text coordinates to avoid whitespace-normalisation bugs:
+    PDF text often contains multi-space gaps from column detection, so
+    split()+join() would compute a shorter span length and under-redact.
+
+    Trailing trim: "John Smith senior engineer" → "John Smith"
+    Leading trim:  "Manager John Smith" → "John Smith"
     """
     from presidio_analyzer import RecognizerResult
 
     trimmed = []
     for r in results:
         if r.entity_type == "PERSON":
-            working = text[r.start : r.end].rstrip()
+            span_start = r.start
+            span_end = r.end
+
+            # Trim trailing non-name words
             while True:
-                parts = working.rsplit(None, 1)
+                current = text[span_start:span_end].rstrip()
+                if not current:
+                    break
+                parts = current.rsplit(None, 1)
                 if len(parts) <= 1:
                     break
                 remaining, last_word = parts
                 if last_word.lower().strip(".,;:|") in _NON_NAME_WORDS:
-                    working = remaining.rstrip()
+                    span_end = span_start + len(remaining.rstrip())
                 else:
                     break
-            new_end = r.start + len(working)
-            if new_end != r.end:
-                r = RecognizerResult(r.entity_type, r.start, new_end, r.score)
+
+            # Trim leading non-name words
+            while True:
+                current = text[span_start:span_end]
+                lstripped = current.lstrip()
+                parts = lstripped.split(None, 1)
+                if len(parts) <= 1:
+                    break
+                first_word, _ = parts
+                if first_word.lower().strip(".,;:|") in _NON_NAME_WORDS:
+                    span_start += len(current) - len(lstripped) + len(first_word)
+                    while span_start < span_end and text[span_start].isspace():
+                        span_start += 1
+                else:
+                    break
+
+            if span_start >= span_end:
+                continue  # trimmed to nothing — drop the entity
+            if span_start != r.start or span_end != r.end:
+                r = RecognizerResult(r.entity_type, span_start, span_end, r.score)
         trimmed.append(r)
     return trimmed
 
