@@ -92,7 +92,8 @@ def _run_source(
         except RefreshError:
             notify(
                 f"Google Sheets token has expired or is missing. "
-                f"Re-authenticate locally and upload {config.GOOGLE_TOKEN_FILE}."
+                f"Re-authenticate locally and upload {config.GOOGLE_TOKEN_FILE}.",
+                urgency="critical",
             )
             raise
 
@@ -148,14 +149,12 @@ def _run_source(
                 job = browser.extract_job_details(page, job_stub)
             except Exception as e:
                 console.print(f"[red]Failed to extract details:[/red] {e}")
-                notify(f"Failed to extract job details from {job_stub['url']}: {e}")
                 continue
 
             try:
                 match = match_job(resume_text, job)
             except Exception as e:
                 console.print(f"[red]LLM error:[/red] {e}")
-                notify(f"LLM error for {job_stub['url']}: {e}")
                 continue
 
             score = match["score"]
@@ -295,6 +294,8 @@ def main(
                         headless_only=effective_headless_only,
                     )
                 )
+            except RefreshError:
+                sys.exit(1)  # already notified (critical) in _add_to_sheet
             except Exception as e:
                 notify(f"Fatal error: {e}", urgency="critical")
                 sys.exit(1)
