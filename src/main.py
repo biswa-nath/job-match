@@ -67,6 +67,7 @@ def _maybe_add_to_sheet(
         mark_added_to_sheet(conn, match_id)
     except Exception as e:
         console.print(f"[red]Database error (sheet row was written):[/red] {e}")
+        notify(f"Database error after writing sheet row for match {match_id}: {e}")
     return True
 
 
@@ -81,14 +82,9 @@ def _run_source(
 ) -> list[dict]:
     """Run the scrape+match pipeline for one job board. Returns results."""
     results = []
-    sheets_auth_failed = False
 
     def _add_to_sheet(job, match_id, score, recommendation):
-        """Wraps _maybe_add_to_sheet with RefreshError isolation so a stale
-        Google token doesn't abort the entire run."""
-        nonlocal sheets_auth_failed
-        if sheets_auth_failed:
-            return False
+        """Wraps _maybe_add_to_sheet; notifies on auth failure then re-raises."""
         try:
             return _maybe_add_to_sheet(
                 job, match_id, score, recommendation, threshold, dry_run, conn
@@ -98,9 +94,7 @@ def _run_source(
                 f"Google Sheets token has expired or is missing. "
                 f"Re-authenticate locally and upload {config.GOOGLE_TOKEN_FILE}."
             )
-            sheets_auth_failed = True
-            return False
-        # Other exceptions propagate → caller's `except Exception: break`
+            raise
 
     with sync_playwright() as pw:
         if headless_only:
@@ -134,12 +128,9 @@ def _run_source(
 
                 added = False
                 if not existing["added_to_sheet"]:
-                    try:
-                        added = _add_to_sheet(
-                            job_stub, existing["id"], score, recommendation
-                        )
-                    except Exception:
-                        break
+                    added = _add_to_sheet(
+                        job_stub, existing["id"], score, recommendation
+                    )
 
                 results.append(
                     {
@@ -157,21 +148,20 @@ def _run_source(
                 job = browser.extract_job_details(page, job_stub)
             except Exception as e:
                 console.print(f"[red]Failed to extract details:[/red] {e}")
+                notify(f"Failed to extract job details from {job_stub['url']}: {e}")
                 continue
 
             try:
                 match = match_job(resume_text, job)
             except Exception as e:
                 console.print(f"[red]LLM error:[/red] {e}")
+                notify(f"LLM error for {job_stub['url']}: {e}")
                 continue
 
             score = match["score"]
             recommendation = match["recommendation"]
             match_id = save_match(conn, resume_id, job_id, score, recommendation)
-            try:
-                added = _add_to_sheet(job, match_id, score, recommendation)
-            except Exception:
-                break
+            added = _add_to_sheet(job, match_id, score, recommendation)
             results.append(
                 {
                     **job,
@@ -241,10 +231,12 @@ def main(
             f"[red]No valid sources in '{source}'.[/red] "
             f"Supported: {', '.join(config.SUPPORTED_SOURCES)}"
         )
+        notify(f"No valid sources: '{source}'", urgency="critical")
         sys.exit(1)
 
     if not resume.lower().endswith(".pdf"):
         console.print(f"[red]--resume must point to a PDF file:[/red] {resume}")
+        notify(f"--resume must be a PDF: {resume}", urgency="critical")
         sys.exit(1)
 
     try:
@@ -252,13 +244,16 @@ def main(
         raw_text = extract_pdf(resume)
     except FileNotFoundError:
         console.print(f"[red]Resume file not found:[/red] {resume}")
+        notify(f"Resume file not found: {resume}", urgency="critical")
         sys.exit(1)
     except Exception as e:
         console.print(f"[red]Failed to read PDF:[/red] {e}")
+        notify(f"Failed to read PDF: {e}", urgency="critical")
         sys.exit(1)
 
     if not raw_text.strip():
         console.print(f"[red]No text could be extracted from:[/red] {resume}")
+        notify(f"No text extracted from resume: {resume}", urgency="critical")
         sys.exit(1)
 
     console.print("[dim]Redacting PII…[/dim]")
@@ -266,6 +261,7 @@ def main(
         resume_text = redact(raw_text)
     except Exception as e:
         console.print(f"[red]PII redaction failed:[/red] {e}")
+        notify(f"PII redaction failed: {e}", urgency="critical")
         sys.exit(1)
 
     if dry_run:
@@ -287,17 +283,21 @@ def main(
         for source_name in sources:
             console.print(f"\n[bold]--- Scraping {source_name} ---[/bold]")
             browser = get_browser(source_name)
-            all_results.extend(
-                _run_source(
-                    browser,
-                    resume_id,
-                    resume_text,
-                    conn,
-                    threshold,
-                    dry_run,
-                    headless_only=effective_headless_only,
+            try:
+                all_results.extend(
+                    _run_source(
+                        browser,
+                        resume_id,
+                        resume_text,
+                        conn,
+                        threshold,
+                        dry_run,
+                        headless_only=effective_headless_only,
+                    )
                 )
-            )
+            except Exception as e:
+                notify(f"Fatal error: {e}", urgency="critical")
+                sys.exit(1)
     finally:
         conn.close()
 
