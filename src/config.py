@@ -12,6 +12,10 @@ DEFAULT_THRESHOLD = 60
 LLM_MODEL = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-6")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
+# Desktop notifications via notify-send (local / cron deployments).
+# Set DESKTOP_NOTIFY=1 in .env to enable. Requires libnotify-bin.
+DESKTOP_NOTIFY = os.getenv("DESKTOP_NOTIFY", "").lower() in ("1", "true")
+
 # Lambda / headless deployment
 # Set LAMBDA_MODE=1 to skip headed browser login and use SNS for expiry alerts.
 LAMBDA_MODE = os.getenv("LAMBDA_MODE", "").lower() in ("1", "true")
