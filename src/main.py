@@ -21,7 +21,7 @@ from db.database import (
 from matcher.llm_matcher import match_job
 from notifications import notify
 from resume import extract_pdf, redact
-from sheets.google_sheets import append_job_row
+from sheets.google_sheets import append_job_row, deduplicate_sheet
 
 console = Console()
 
@@ -301,6 +301,14 @@ def main(
                 sys.exit(1)
     finally:
         conn.close()
+
+    if not dry_run:
+        try:
+            deleted = deduplicate_sheet()
+            if deleted:
+                console.print(f"[dim]Removed {deleted} duplicate sheet row(s).[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]Sheet deduplication skipped:[/yellow] {e}")
 
     console.print("\n")
     table = Table(title="Job Match Summary", show_lines=True)
