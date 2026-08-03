@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 import click
 from google.auth.exceptions import RefreshError
@@ -45,6 +46,7 @@ def _maybe_add_to_sheet(
     threshold: int,
     dry_run: bool,
     conn,
+    resume_name: str = "",
 ) -> bool:
     """
     Append to Google Sheet if score >= threshold and not already added.
@@ -59,7 +61,7 @@ def _maybe_add_to_sheet(
         )
         return False
     try:
-        append_job_row(job, score, recommendation)
+        append_job_row(job, score, recommendation, resume_name)
     except Exception as e:
         console.print(f"[red]Google Sheets error:[/red] {e}")
         raise
@@ -79,6 +81,7 @@ def _run_source(
     threshold: int,
     dry_run: bool,
     headless_only: bool = False,
+    resume_name: str = "",
 ) -> list[dict]:
     """Run the scrape+match pipeline for one job board. Returns results."""
     results = []
@@ -87,7 +90,14 @@ def _run_source(
         """Wraps _maybe_add_to_sheet; notifies on auth failure then re-raises."""
         try:
             return _maybe_add_to_sheet(
-                job, match_id, score, recommendation, threshold, dry_run, conn
+                job,
+                match_id,
+                score,
+                recommendation,
+                threshold,
+                dry_run,
+                conn,
+                resume_name,
             )
         except RefreshError:
             notify(
@@ -272,6 +282,8 @@ def main(
             "[dim]Headless-only mode: browser login will not be attempted.[/dim]"
         )
 
+    resume_name = Path(resume).name
+
     conn = get_connection()
     try:
         init_db(conn)
@@ -292,6 +304,7 @@ def main(
                         threshold,
                         dry_run,
                         headless_only=effective_headless_only,
+                        resume_name=resume_name,
                     )
                 )
             except RefreshError:
