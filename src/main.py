@@ -282,7 +282,7 @@ def main(
             "[dim]Headless-only mode: browser login will not be attempted.[/dim]"
         )
 
-    resume_name = Path(resume).stem
+    resume_name = Path(resume).name
 
     conn = get_connection()
     try:
