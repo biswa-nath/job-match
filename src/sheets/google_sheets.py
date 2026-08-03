@@ -46,11 +46,13 @@ def get_sheets_service():
     return build("sheets", "v4", credentials=creds)
 
 
-def append_job_row(job: dict, score: int, recommendation: str) -> None:
+def append_job_row(
+    job: dict, score: int, recommendation: str, resume_name: str
+) -> None:
     """
     Append a job row to the Google Sheet.
 
-    Columns: Position, Company, Office, Location, Status, Tag, Applied on, Link, Score, Assessment
+    Columns: Position, Company, Office, Location, Status, Tag, Applied on, Link, Score, Assessment, Resume
     """
     service = get_sheets_service()
 
@@ -65,9 +67,10 @@ def append_job_row(job: dict, score: int, recommendation: str) -> None:
         job.get("url", ""),
         score,
         recommendation,
+        resume_name,
     ]
 
-    range_name = f"{config.SHEET_TAB}!A:I"
+    range_name = f"{config.SHEET_TAB}!A:K"
     body = {"values": [row]}
 
     service.spreadsheets().values().append(
