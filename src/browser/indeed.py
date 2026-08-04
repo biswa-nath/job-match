@@ -37,17 +37,26 @@ class IndeedBrowser(JobBoardBrowser):
         return browser, context
 
     def _make_scraping_context(self, playwright):
-        # Lambda has no system Chrome — fall back to Playwright Chromium.
-        # Valid session cookies make Cloudflare much less aggressive during scraping.
-        kwargs = {} if config.LAMBDA_MODE else {"channel": "chrome"}
-        browser = playwright.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                *self._container_args(),
-            ],
-            **kwargs,
-        )
+        if config.LAMBDA_MODE:
+            # Lambda has no system Chrome — use bundled Chromium headless.
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    *self._container_args(),
+                ],
+            )
+        else:
+            # Cloudflare blocks headless Chrome on www.indeed.com via JS fingerprinting.
+            # Headed system Chrome passes those checks; --window-position moves it off-screen.
+            browser = playwright.chromium.launch(
+                channel="chrome",
+                headless=False,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--window-position=-2000,-2000",
+                ],
+            )
         context = browser.new_context()
         context.add_init_script(_STEALTH_SCRIPT)
         return browser, context
@@ -153,28 +162,53 @@ class IndeedBrowser(JobBoardBrowser):
         position/company/location/office_type already populated from get_saved_jobs.
         """
         url = job["url"]
-        page.goto(url, wait_until="load")
-        page.wait_for_timeout(3000)
+        page.goto(url, wait_until="domcontentloaded")
 
-        el = page.query_selector("#jobDescriptionText")
-        description = el.inner_text().strip() if el else ""
+        # JSON-LD is server-rendered in the raw HTML — unaffected by headless
+        # bot detection that prevents React from rendering the visible DOM.
+        description = page.evaluate("""() => {
+            for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+                try {
+                    const d = JSON.parse(s.textContent);
+                    if (d['@type'] === 'JobPosting' && d.description) {
+                        const tmp = document.createElement('div');
+                        tmp.innerHTML = d.description;
+                        const text = tmp.innerText.trim();
+                        if (text.length > 50) return text;
+                    }
+                } catch(e) {}
+            }
+            return '';
+        }""")
 
         if not description:
-            el = page.query_selector('[data-testid="jobsearch-jobDescriptionText"]')
-            description = el.inner_text().strip() if el else ""
+            # Fallback: wait for the rendered DOM element (works when not bot-detected)
+            for selector in (
+                "#jobDescriptionText",
+                '[data-testid="jobsearch-jobDescriptionText"]',
+                ".jobsearch-jobDescriptionText",
+                "#job-details",
+                '[class*="jobDescription"]',
+            ):
+                try:
+                    page.wait_for_selector(selector, state="attached", timeout=5_000)
+                except TimeoutError:
+                    continue
+                el = page.query_selector(selector)
+                if el:
+                    text = el.inner_text().strip()
+                    if len(text) > 50:
+                        description = text
+                        break
 
         if not description:
-            description = page.evaluate("""() => {
-                const byId = document.querySelector('[id*="jobDescription"]');
-                if (byId && byId.innerText.trim().length > 50) {
-                    return byId.innerText.trim();
-                }
-                const byCls = document.querySelector('[class*="jobDescription"]');
-                if (byCls && byCls.innerText.trim().length > 50) {
-                    return byCls.innerText.trim();
-                }
-                return '';
-            }""")
+            debug = page.evaluate("""() => ({
+                title: document.title,
+                url: window.location.href,
+                jsonLdCount: document.querySelectorAll('script[type="application/ld+json"]').length,
+                bodySnippet: (document.body?.innerText || '').trim().slice(0, 300),
+            })""")
+            console.print(f"[yellow]  No description found — debug: {debug}[/yellow]")
 
         return {**job, "description": description}
 
