@@ -164,48 +164,29 @@ class IndeedBrowser(JobBoardBrowser):
         url = job["url"]
         page.goto(url, wait_until="domcontentloaded")
 
-        # JSON-LD is server-rendered in the raw HTML — unaffected by headless
-        # bot detection that prevents React from rendering the visible DOM.
-        description = page.evaluate("""() => {
-            for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
-                try {
-                    const d = JSON.parse(s.textContent);
-                    if (d['@type'] === 'JobPosting' && d.description) {
-                        const tmp = document.createElement('div');
-                        tmp.innerHTML = d.description;
-                        const text = tmp.innerText.trim();
-                        if (text.length > 50) return text;
-                    }
-                } catch(e) {}
-            }
-            return '';
-        }""")
-
-        if not description:
-            # Fallback: wait for the rendered DOM element (works when not bot-detected)
-            for selector in (
-                "#jobDescriptionText",
-                '[data-testid="jobsearch-jobDescriptionText"]',
-                ".jobsearch-jobDescriptionText",
-                "#job-details",
-                '[class*="jobDescription"]',
-            ):
-                try:
-                    page.wait_for_selector(selector, state="attached", timeout=5_000)
-                except TimeoutError:
-                    continue
-                el = page.query_selector(selector)
-                if el:
-                    text = el.inner_text().strip()
-                    if len(text) > 50:
-                        description = text
-                        break
+        description = ""
+        for selector in (
+            "#jobDescriptionText",
+            '[data-testid="jobsearch-jobDescriptionText"]',
+            ".jobsearch-jobDescriptionText",
+            "#job-details",
+            '[class*="jobDescription"]',
+        ):
+            try:
+                page.wait_for_selector(selector, state="attached", timeout=5_000)
+            except TimeoutError:
+                continue
+            el = page.query_selector(selector)
+            if el:
+                text = el.inner_text().strip()
+                if len(text) > 50:
+                    description = text
+                    break
 
         if not description:
             debug = page.evaluate("""() => ({
                 title: document.title,
                 url: window.location.href,
-                jsonLdCount: document.querySelectorAll('script[type="application/ld+json"]').length,
                 bodySnippet: (document.body?.innerText || '').trim().slice(0, 300),
             })""")
             console.print(f"[yellow]  No description found — debug: {debug}[/yellow]")
