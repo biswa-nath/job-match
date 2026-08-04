@@ -30,10 +30,11 @@ _SESSION_DIR = os.getenv("SESSION_DIR", "data")
 # For Lambda deployments set RESUME_PATH env var (e.g. pointing to EFS).
 RESUME_PATH = os.getenv("RESUME_PATH", "")
 
-SUPPORTED_SOURCES = ["linkedin", "indeed"]
+SUPPORTED_SOURCES = ["linkedin", "indeed", "naukri"]
 SESSION_FILES = {
     "linkedin": os.path.join(_SESSION_DIR, "linkedin_session.json"),
     "indeed": os.path.join(_SESSION_DIR, "indeed_session.json"),
+    "naukri": os.path.join(_SESSION_DIR, "naukri_session.json"),
 }
 GOOGLE_CREDS_FILE = os.path.join(_SESSION_DIR, "credentials.json")
 GOOGLE_TOKEN_FILE = os.path.join(_SESSION_DIR, "token.json")

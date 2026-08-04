@@ -46,6 +46,15 @@ The entry point is `main.py` (`job-matcher` CLI command via `main:main`). All co
 2. Create `browser/<name>.py` with a class extending `JobBoardBrowser` — implement `name`, `login_url`, `saved_jobs_url`, `get_saved_jobs()`, and `extract_job_details()`. Override `_login_excluded_patterns`, `_make_headed_context()`, or `_make_scraping_context()` as needed.
 3. Export `Browser = <YourClass>` at the bottom of the module.
 
+## Naukri-specific notes
+
+- Saved jobs URL: `https://www.naukri.com/mnjuser/savedjobs`. Job cards are `article.one-theme-job-tuple`; the clickable link is `a.tupleLink` whose `href` is the full canonical job URL. Job ID lives in `div.tuple[data-jobid]`.
+- Title from `.title` (prefer the `title` attribute for untruncated text); company from `.org`; location from `.location-container .loc` (`title` attribute for multi-city roles).
+- Job description on the detail page is in `[class*="dang-inner-html"]` (CSS-modules class, matched by substring).
+- The page may lazy-load additional cards on scroll; the scraper scrolls to the bottom in a loop until the card count stabilises.
+- Both the login and scraping browsers use `channel="chrome"` (system Chrome) to pass Akamai's bot detection. Playwright's Chromium gets an "Access Denied" 403 from Akamai on the saved jobs page.
+- Login page: `https://www.naukri.com/nlogin/login`. On first run, a headed system Chrome window opens for manual login; session cookies are saved to `naukri_session.json`.
+
 ## Indeed-specific notes
 
 - Saved jobs URL: `https://myjobs.indeed.com/saved`. Job cards are in `ul.atw-Updates-list`; title/link from `a.atw-JobInfo-jobTitle`; company and location from the two `<span>` elements inside `div.atw-JobInfo-companyLocation`.
