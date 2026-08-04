@@ -27,17 +27,16 @@ Where:
 - score: percentage match between the resume and job (0 = no match, 100 = perfect fit)
 - recommendation: brief advice on alignment and any gaps
 
----
-RESUME:
+<resume>
 {resume_text}
+</resume>
+<job_title>{job.get("position", "N/A")}</job_title>
+<company_name>{job.get("company", "N/A")}</company_name>
+<location>{job.get("location", "N/A")} ({job.get("office_type", "N/A")})</location>
 
----
-JOB TITLE: {job.get("position", "N/A")}
-COMPANY: {job.get("company", "N/A")}
-LOCATION: {job.get("location", "N/A")} ({job.get("office_type", "N/A")})
-
-JOB DESCRIPTION:
+<job_description>
 {job.get("description", "N/A")}
+</job_description>
 """
 
     response = litellm.completion(
