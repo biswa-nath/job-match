@@ -26,6 +26,8 @@ AWS_REGION = os.getenv("AWS_REGION", "us-east-1")
 # Defaults to "data" so local runs resolve files from the data/ directory.
 _SESSION_DIR = os.getenv("SESSION_DIR", "data")
 
+_SECRETS_DIR = os.getenv("SECRETS_DIR", "secrets")
+
 # Path to resume PDF. Required for local runs via --resume flag.
 # For Lambda deployments set RESUME_PATH env var (e.g. pointing to EFS).
 RESUME_PATH = os.getenv("RESUME_PATH", "")
@@ -36,6 +38,6 @@ SESSION_FILES = {
     "indeed": os.path.join(_SESSION_DIR, "indeed_session.json"),
     "naukri": os.path.join(_SESSION_DIR, "naukri_session.json"),
 }
-GOOGLE_CREDS_FILE = os.path.join(_SESSION_DIR, "credentials.json")
+GOOGLE_CREDS_FILE = os.path.join(_SECRETS_DIR, "credentials.json")
 GOOGLE_TOKEN_FILE = os.path.join(_SESSION_DIR, "token.json")
 GOOGLE_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]

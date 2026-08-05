@@ -184,6 +184,34 @@ class IndeedBrowser(JobBoardBrowser):
                     break
 
         if not description:
+            # Indeed sometimes serves a React-Native-Web variant of this page
+            # (css-in-js classes, no #jobDescriptionText id). The description
+            # heading's data-testid is stable there; the full text sits in its
+            # parent container alongside the heading text itself.
+            try:
+                page.wait_for_selector(
+                    '[data-testid="vj-job-description-heading"]',
+                    state="attached",
+                    timeout=5_000,
+                )
+                text = page.evaluate("""() => {
+                    const heading = document.querySelector(
+                        '[data-testid="vj-job-description-heading"]'
+                    );
+                    const container = heading?.parentElement;
+                    if (!container) return '';
+                    const full = (container.innerText || '').trim();
+                    const headingText = (heading.innerText || '').trim();
+                    return full.startsWith(headingText)
+                        ? full.slice(headingText.length).trim()
+                        : full;
+                }""")
+                if len(text) > 50:
+                    description = text
+            except TimeoutError:
+                pass
+
+        if not description:
             debug = page.evaluate("""() => ({
                 title: document.title,
                 url: window.location.href,

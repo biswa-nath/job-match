@@ -32,7 +32,7 @@ Where:
 </resume>
 <job_title>{job.get("position", "N/A")}</job_title>
 <company_name>{job.get("company", "N/A")}</company_name>
-<location>{job.get("location", "N/A")} ({job.get("office_type", "N/A")})</location>
+<job_location>{job.get("location", "N/A")} ({job.get("office_type", "N/A")})</job_location>
 
 <job_description>
 {job.get("description", "N/A")}
@@ -42,7 +42,7 @@ Where:
     response = litellm.completion(
         model=config.LLM_MODEL,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
+        temperature=0.05,
     )
 
     raw = response.choices[0].message.content.strip()

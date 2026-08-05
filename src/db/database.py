@@ -126,6 +126,25 @@ def save_match(
     return match_id
 
 
+def delete_jobs_by_source(conn, source: str) -> tuple[int, int]:
+    """Delete all jobs (and their job_matches) whose job_link belongs to source.
+    Returns (matches_deleted, jobs_deleted)."""
+    pattern = f"%{source}.com%"
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM job_matches
+            WHERE job_id IN (SELECT id FROM jobs WHERE job_link ILIKE %s)
+            """,
+            (pattern,),
+        )
+        matches_deleted = cur.rowcount
+        cur.execute("DELETE FROM jobs WHERE job_link ILIKE %s", (pattern,))
+        jobs_deleted = cur.rowcount
+    conn.commit()
+    return matches_deleted, jobs_deleted
+
+
 def mark_added_to_sheet(conn, match_id: int) -> None:
     """Set added_to_sheet = true for a job_match row."""
     with conn.cursor() as cur:
