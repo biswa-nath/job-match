@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/claude-code-settings.json",
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-5",
   "alwaysThinkingEnabled": true,
   "showTurnDuration": true,
   "autoUpdatesChannel": "stable",
