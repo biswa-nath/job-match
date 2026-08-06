@@ -310,8 +310,10 @@ def main(
             except RefreshError:
                 sys.exit(1)  # already notified (critical) in _add_to_sheet
             except Exception as e:
-                notify(f"Fatal error: {e}", urgency="critical")
-                sys.exit(1)
+                # Isolate failures per source — one board crashing (e.g. a
+                # browser launch error) shouldn't stop the others from running.
+                notify(f"{source_name} scrape failed: {e}", urgency="critical")
+                console.print(f"[red]{source_name} scrape failed:[/red] {e}")
     finally:
         conn.close()
 
