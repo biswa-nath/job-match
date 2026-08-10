@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/claude-code-settings.json",
-  "model": "claude-sonnet-5",
+  "model": "claude-sonnet-4-6",
   "alwaysThinkingEnabled": true,
   "showTurnDuration": true,
   "autoUpdatesChannel": "stable",
@@ -8,15 +8,13 @@
     "defaultMode": "default",
     "allow": [
       "Read(src/**)",
-      "Write(src/**)",
-      "Bash(npm run *)",
+      "Edit(src/**)",
       "Bash(git status)",
       "Bash(git diff *)",
       "Bash(pytest *)"
     ],
     "ask": [
-      "Bash(sudo *)",
-      "Bash(npm install *)"
+      "Bash(sudo *)"
     ],
     "deny": [
       "Read(.env)",
