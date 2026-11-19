@@ -304,9 +304,10 @@ protection — verify before staging any `git add .`.
 Token is expired or revoked. Re-authenticate:
 
 ```bash
-rm data/token.json
-uv run python -c "from sheets.google_sheets import get_sheets_service; get_sheets_service()"
+uv run python -c "import config; import os; os.remove(config.GOOGLE_TOKEN_FILE) if os.path.exists(config.GOOGLE_TOKEN_FILE) else None; from sheets.google_sheets import get_sheets_service; get_sheets_service()"
 ```
+
+The token path is `SESSION_DIR/token.json`
 
 Complete the browser OAuth flow. If the error persists, regenerate `credentials.json`
 from Google Cloud Console.
