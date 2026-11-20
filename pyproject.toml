@@ -34,6 +34,7 @@ packages = ["src/browser", "src/db", "src/matcher", "src/sheets"]
 sources = ["src"]
 include = [
     "src/main.py",
+    "src/cleanup.py",
     "src/config.py",
     "src/lambda_handler.py",
     "src/notifications.py",

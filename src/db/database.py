@@ -145,6 +145,36 @@ def delete_jobs_by_source(conn, source: str) -> tuple[int, int]:
     return matches_deleted, jobs_deleted
 
 
+def delete_jobs_by_links(conn, links: list[str]) -> tuple[int, int, int]:
+    """Delete the jobs for the given links, their job_matches, and any resume row
+    left with no matches as a result (one transaction, so nothing is orphaned).
+    Returns (matches_deleted, jobs_deleted, resumes_deleted)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            DELETE FROM job_matches
+            WHERE job_id IN (SELECT id FROM jobs WHERE job_link = ANY(%s))
+            RETURNING resume_id
+            """,
+            (links,),
+        )
+        resume_ids = list({row[0] for row in cur.fetchall()})
+        matches_deleted = cur.rowcount
+        cur.execute("DELETE FROM jobs WHERE job_link = ANY(%s)", (links,))
+        jobs_deleted = cur.rowcount
+        cur.execute(
+            """
+            DELETE FROM resume
+            WHERE id = ANY(%s)
+              AND NOT EXISTS (SELECT 1 FROM job_matches WHERE resume_id = resume.id)
+            """,
+            (resume_ids,),
+        )
+        resumes_deleted = cur.rowcount
+    conn.commit()
+    return matches_deleted, jobs_deleted, resumes_deleted
+
+
 def mark_added_to_sheet(conn, match_id: int) -> None:
     """Set added_to_sheet = true for a job_match row."""
     with conn.cursor() as cur:

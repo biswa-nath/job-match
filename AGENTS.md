@@ -35,6 +35,7 @@ uv run job-matcher --resume <path>.pdf --source linkedin:indeed
 uv run job-matcher --resume <path>.pdf --source all
 uv run job-matcher --resume <path>.pdf --dry-run         # score only, no sheet write
 uv run job-matcher --resume <path>.pdf --threshold 75    # override score cutoff
+uv run job-matcher cleanup                               # drop closed 'Pending' sheet rows + DB entries (asks first)
 
 # Lint / format
 uv run ruff check --fix .
@@ -47,7 +48,8 @@ uv run ruff format .
 
 ```
 src/
-  main.py              # CLI entry point (click command)
+  main.py              # CLI entry point (click group; runs the pipeline when no subcommand)
+  cleanup.py           # `cleanup` subcommand: find closed postings, confirm, delete sheet rows + DB rows
   config.py            # All env-var loading; imported by every module
   resume.py            # PDF extraction (pdfplumber) + PII redaction (Presidio/spaCy)
   notifications.py     # Desktop/SNS notification helper
@@ -125,6 +127,15 @@ PDF file
 - **`init_db()` is idempotent.** It uses `CREATE TABLE IF NOT EXISTS` and
   `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Schema migrations belong here, not in
   separate migration files.
+
+- **`cleanup` never deletes on uncertainty.** `JobBoardBrowser.closed_reason()` raises
+  if a page can't load and returns a reason only on a phrase match (`closed_phrases`)
+  or HTTP 404/410; unreachable or blocked links are reported and left alone. Only
+  `Pending` rows are deleted, and only after interactive confirmation. DB rows go
+  first (`delete_jobs_by_links`, one transaction: matches → jobs → resumes left with
+  no matches), then sheet rows, so a failed sheet step is repaired by re-running.
+  Note: deleting the DB cache means a job still saved on the board will be re-scored
+  and may be re-added to the sheet by the next normal run.
 
 - **Per-source isolation in the main loop.** A crash in one board's `_run_source()`
   call must not stop other boards. The outer `except Exception` in `main.py` achieves

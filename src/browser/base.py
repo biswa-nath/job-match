@@ -6,6 +6,7 @@ from rich.console import Console
 
 from browser.session import save_cookies, load_cookies
 import config
+from notifications import notify
 
 console = Console()
 
@@ -130,6 +131,46 @@ class JobBoardBrowser(ABC):
         page = context.new_page()
         load_cookies(context, self.session_file)
         return context, page
+
+    def open_session(
+        self, playwright: Playwright, headless_only: bool
+    ) -> tuple[BrowserContext, Page] | None:
+        """
+        Ensure a valid login (interactive unless headless_only) and return a
+        scraping browser. Returns None, after alerting, if headless_only and the
+        saved session is invalid.
+        """
+        if headless_only:
+            if not self.check_session_headless(playwright):
+                notify(
+                    f"{self.name} session is invalid or expired. "
+                    f"Run `uv run job-matcher --source {self.name}` locally to "
+                    f"log in and refresh {self.session_file}."
+                )
+                return None
+        else:
+            self.login(playwright)
+        return self.create_scraping_browser(playwright)
+
+    # Lower-case phrases that mark a posting as closed. Subclasses may extend.
+    closed_phrases: tuple[str, ...] = (
+        "no longer accepting applications",
+        "this job has expired",
+        "this job is no longer available",
+    )
+
+    def closed_reason(self, page: Page, url: str) -> str | None:
+        """
+        Open a job page and return why it is closed (the matched phrase or HTTP
+        status), or None if it still looks open. Raises if the page cannot be
+        loaded — callers must treat that as "unknown", never as closed.
+        """
+        response = page.goto(url, wait_until="domcontentloaded")
+        page.wait_for_timeout(3000)
+        if response and response.status in (404, 410):
+            return f"HTTP {response.status}"
+        text = page.locator("body").inner_text().lower()
+        return next((p for p in self.closed_phrases if p in text), None)
 
     @abstractmethod
     def get_saved_jobs(self, page: Page) -> list[dict]:

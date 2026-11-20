@@ -86,17 +86,8 @@ def append_job_row(
     )
 
 
-def deduplicate_sheet() -> int:
-    """
-    Remove duplicate rows identified by the same Link column value.
-
-    - If any duplicate has Status 'Applied': keep the earliest such row, delete the rest.
-    - If all duplicates have Status 'Pending': keep the last row, delete the earlier ones.
-
-    Returns the number of rows deleted.
-    """
-    service = get_sheets_service()
-
+def _read_link_rows(service) -> list[tuple[int, str, str]]:
+    """Return (1-based row index, link, status) for every sheet row that has a link."""
     result = (
         service.spreadsheets()
         .values()
@@ -105,7 +96,7 @@ def deduplicate_sheet() -> int:
     )
     rows = result.get("values", [])
     if len(rows) <= 1:
-        return 0
+        return []
 
     header = [h.strip() for h in rows[0]]
     try:
@@ -114,26 +105,18 @@ def deduplicate_sheet() -> int:
     except ValueError as e:
         raise ValueError(f"Required column not found in sheet header: {e}") from e
 
-    # Map link → list of (1-based row index, status)
-    link_rows: dict[str, list[tuple[int, str]]] = {}
+    entries: list[tuple[int, str, str]] = []
     for i, row in enumerate(rows[1:], start=2):  # row 1 is header
         link = (row[link_col] if len(row) > link_col else "").strip()
         if not link:
             continue
         status = row[status_col] if len(row) > status_col else ""
-        link_rows.setdefault(link, []).append((i, status))
+        entries.append((i, link, status))
+    return entries
 
-    rows_to_delete: set[int] = set()
-    for entries in link_rows.values():
-        if len(entries) <= 1:
-            continue
-        applied = [idx for idx, s in entries if s.strip().lower() == "applied"]
-        keep_idx = applied[0] if applied else entries[-1][0]
-        rows_to_delete.update(idx for idx, _ in entries if idx != keep_idx)
 
-    if not rows_to_delete:
-        return 0
-
+def _delete_rows(service, row_indices: set[int]) -> None:
+    """Delete the given 1-based sheet rows in a single batch request."""
     spreadsheet = service.spreadsheets().get(spreadsheetId=config.SHEET_ID).execute()
     sheet_id = next(
         (
@@ -158,10 +141,69 @@ def deduplicate_sheet() -> int:
                 }
             }
         }
-        for row_idx in sorted(rows_to_delete, reverse=True)
+        for row_idx in sorted(row_indices, reverse=True)
     ]
     service.spreadsheets().batchUpdate(
         spreadsheetId=config.SHEET_ID, body={"requests": requests}
     ).execute()
 
+
+def deduplicate_sheet() -> int:
+    """
+    Remove duplicate rows identified by the same Link column value.
+
+    - If any duplicate has Status 'Applied': keep the earliest such row, delete the rest.
+    - If all duplicates have Status 'Pending': keep the last row, delete the earlier ones.
+
+    Returns the number of rows deleted.
+    """
+    service = get_sheets_service()
+
+    # Map link → list of (1-based row index, status)
+    link_rows: dict[str, list[tuple[int, str]]] = {}
+    for i, link, status in _read_link_rows(service):
+        link_rows.setdefault(link, []).append((i, status))
+
+    rows_to_delete: set[int] = set()
+    for entries in link_rows.values():
+        if len(entries) <= 1:
+            continue
+        applied = [idx for idx, s in entries if s.strip().lower() == "applied"]
+        keep_idx = applied[0] if applied else entries[-1][0]
+        rows_to_delete.update(idx for idx, _ in entries if idx != keep_idx)
+
+    if not rows_to_delete:
+        return 0
+
+    _delete_rows(service, rows_to_delete)
+    return len(rows_to_delete)
+
+
+def get_pending_links() -> list[str]:
+    """Return the unique links of rows whose Status is 'Pending', in sheet order."""
+    service = get_sheets_service()
+    links = {
+        link: None
+        for _, link, status in _read_link_rows(service)
+        if status.strip().lower() == "pending"
+    }
+    return list(links)
+
+
+def delete_pending_rows_by_links(links: list[str]) -> int:
+    """
+    Delete every 'Pending' row whose Link is in links. The sheet is re-read here
+    so row positions are current; rows with any other Status are left untouched.
+
+    Returns the number of rows deleted.
+    """
+    service = get_sheets_service()
+    targets = set(links)
+    rows_to_delete = {
+        i
+        for i, link, status in _read_link_rows(service)
+        if link in targets and status.strip().lower() == "pending"
+    }
+    if rows_to_delete:
+        _delete_rows(service, rows_to_delete)
     return len(rows_to_delete)
