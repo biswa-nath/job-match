@@ -18,7 +18,7 @@ resource "aws_lambda_function" "job_matcher" {
 
   # Playwright + LLM calls can take several minutes; 14 min leaves headroom
   timeout     = 840
-  memory_size = 1024
+  memory_size = 4096
 
   vpc_config {
     subnet_ids         = data.aws_subnets.private.ids

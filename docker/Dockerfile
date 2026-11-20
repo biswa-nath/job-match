@@ -1,60 +1,45 @@
-FROM public.ecr.aws/lambda/python:3.12
+FROM ubuntu:24.04
 
-# Lambda task root — defined by the base image at runtime, declared here
-# explicitly so Docker build instructions can reference it reliably.
-ENV LAMBDA_TASK_ROOT=/var/task
+ENV DEBIAN_FRONTEND=noninteractive \
+    LAMBDA_TASK_ROOT=/var/task \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:$PATH
 
-# Playwright Chromium dependencies for Amazon Linux 2023.
-# Listed manually because `playwright install-deps` does not recognise AL2023
-# and falls back to apt-get, which is not available here.
-RUN dnf install -y \
-        alsa-lib \
-        at-spi2-atk \
-        at-spi2-core \
-        atk \
-        cups-libs \
-        dbus-glib \
-        gtk3 \
-        libX11 \
-        libXcomposite \
-        libXdamage \
-        libXext \
-        libXfixes \
-        libXi \
-        libXrandr \
-        libXScrnSaver \
-        libXtst \
-        libXt \
-        libxcb \
-        libxkbcommon \
-        libdrm \
-        mesa-libgbm \
-        nss \
-        nspr \
-        pango \
-    && dnf clean all
+# Python 3.14 from the deadsnakes PPA, installed into an isolated virtualenv.
+# The venv ignores Debian's /usr/lib/python3/dist-packages, which avoids pip
+# failing to uninstall apt-managed packages (e.g. pyparsing, no RECORD file).
+# uv and the Lambda Runtime Interface Client are installed here so they land in
+# an early, stable layer. All apt state is purged in the same RUN.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        software-properties-common ca-certificates curl libatomic1 \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3.14 python3.14-dev python3.14-venv \
+    && python3.14 -m venv /opt/venv \
+    && pip install --no-cache-dir uv awslambdaric \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* /root/.cache
 
-# Install uv for dependency resolution
-RUN pip install uv
-
-# Copy dependency manifests first to maximise Docker layer cache reuse.
-# Dependencies are only reinstalled when pyproject.toml or uv.lock changes.
-COPY pyproject.toml uv.lock ${LAMBDA_TASK_ROOT}/
+COPY pyproject.toml uv.lock scripts/ensure-models.sh ${LAMBDA_TASK_ROOT}/
 WORKDIR ${LAMBDA_TASK_ROOT}
 
-# Export pinned requirements from the lockfile (excluding the project package
-# itself — its source is copied directly below) and install with pip.
-RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt \
-    && pip install -r /tmp/requirements.txt
+# Download the spaCy model wheel, install all Python dependencies, then remove
+# every cache and intermediate file in the same layer.
+RUN mkdir -p wheels \
+    && mv ensure-models.sh wheels/ \
+    && cd wheels && /bin/bash ensure-models.sh && cd .. \
+    && uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt \
+    && pip install --no-cache-dir -r /tmp/requirements.txt \
+    && rm -rf /tmp/requirements.txt wheels /root/.cache
 
-# Download Playwright Chromium binary. Dependencies are installed via dnf above;
-# install-deps is intentionally omitted — it does not support AL2023.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN playwright install chromium
+# playwright install --with-deps handles all Chromium system-library deps via
+# apt automatically on Ubuntu/Debian, replacing the manual dnf list.
+RUN playwright install --with-deps chromium \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /root/.cache
 
-# Copy application source. Contents of src/ land directly in LAMBDA_TASK_ROOT
-# so Python finds browser/, db/, main.py, lambda_handler.py, etc. without
-# any sys.path manipulation.
 COPY src/ ${LAMBDA_TASK_ROOT}/
 
+ENTRYPOINT ["/opt/venv/bin/python", "-m", "awslambdaric"]
 CMD ["lambda_handler.handler"]
