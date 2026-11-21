@@ -9,12 +9,14 @@ from rich.table import Table
 
 import config
 from browser import get_browser
+from cleanup import cleanup
 from browser.base import JobBoardBrowser
 from db.database import (
     get_connection,
     init_db,
     get_or_create_resume,
     get_or_create_job,
+    is_job_active,
     get_match,
     save_match,
     mark_added_to_sheet,
@@ -108,18 +110,10 @@ def _run_source(
             raise
 
     with sync_playwright() as pw:
-        if headless_only:
-            if not browser.check_session_headless(pw):
-                notify(
-                    f"{browser.name} session is invalid or expired. "
-                    f"Run `uv run job-matcher --source {browser.name}` locally to "
-                    f"log in and refresh {browser.session_file}."
-                )
-                return results
-        else:
-            browser.login(pw)
-
-        context, page = browser.create_scraping_browser(pw)
+        session = browser.open_session(pw, headless_only)
+        if session is None:
+            return results
+        context, page = session
 
         saved_jobs = browser.get_saved_jobs(page)
         if not saved_jobs:
@@ -130,6 +124,10 @@ def _run_source(
         for job_stub in saved_jobs:
             console.print(f"\n[cyan]Processing:[/cyan] {job_stub['url']}")
             job_id = get_or_create_job(conn, job_stub["url"])
+
+            if not is_job_active(conn, job_id):
+                console.print("[dim]Closed posting (inactive) — skipped.[/dim]")
+                continue
 
             existing = get_match(conn, resume_id, job_id)
             if existing:
@@ -187,11 +185,11 @@ def _run_source(
     return results
 
 
-@click.command()
+@click.group(invoke_without_command=True)
 @click.option(
     "--resume",
-    required=True,
-    help="Path to resume PDF.",
+    default=None,
+    help="Path to resume PDF. Required unless a subcommand (e.g. cleanup) is used.",
 )
 @click.option(
     "--threshold",
@@ -224,13 +222,24 @@ def _run_source(
         "opening a browser. Automatically enabled when LAMBDA_MODE=1."
     ),
 )
+@click.pass_context
 def main(
-    resume: str, threshold: int, dry_run: bool, source: str, headless_only: bool
+    ctx: click.Context,
+    resume: str | None,
+    threshold: int,
+    dry_run: bool,
+    source: str,
+    headless_only: bool,
 ) -> None:
     """
     Scan saved jobs from LinkedIn or Indeed, score against resume,
     and add high matches to Google Sheet.
     """
+    if ctx.invoked_subcommand is not None:
+        return
+    if not resume:
+        raise click.UsageError("Missing option '--resume'.")
+
     # LAMBDA_MODE env var implies headless-only behaviour
     effective_headless_only = headless_only or config.LAMBDA_MODE
 
@@ -286,7 +295,7 @@ def main(
 
     conn = get_connection()
     try:
-        init_db(conn)
+        init_db()
         resume_id = get_or_create_resume(conn, resume_text)
         console.print(f"[dim]Resume id: {resume_id}[/dim]")
 
@@ -352,6 +361,9 @@ def main(
         )
 
     console.print(table)
+
+
+main.add_command(cleanup)
 
 
 if __name__ == "__main__":

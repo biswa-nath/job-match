@@ -36,7 +36,13 @@ uv run job-matcher --resume my_cv.pdf --source all           # all supported sou
 uv run job-matcher --resume my_cv.pdf --dry-run              # score jobs, skip sheet writes
 uv run job-matcher --resume my_cv.pdf --threshold 50         # override match threshold (default: 60)
 uv run job-matcher --resume my_cv.pdf --headless-only        # skip browser login (Lambda / cron)
+
+uv run job-matcher cleanup                                   # remove 'Pending' rows whose job no longer accepts applications
 ```
+
+`cleanup` opens the link of every sheet row with Status `Pending`, lists the ones that are closed (e.g. "No longer accepting applications", "This job has expired on Indeed"), and — only after you confirm — deletes those rows from the sheet and marks their database entries inactive (`is_active = 'no'`, nothing is deleted from the DB, and later runs skip them). Links that can't be checked are left untouched.
+
+Database schema changes are [Alembic](https://alembic.sqlalchemy.org/) migrations in `src/db/migrations/`, applied automatically on startup; create a new one with `uv run alembic revision -m "..."`.
 
 ## Tech stack
 

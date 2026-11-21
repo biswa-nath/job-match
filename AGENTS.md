@@ -35,6 +35,7 @@ uv run job-matcher --resume <path>.pdf --source linkedin:indeed
 uv run job-matcher --resume <path>.pdf --source all
 uv run job-matcher --resume <path>.pdf --dry-run         # score only, no sheet write
 uv run job-matcher --resume <path>.pdf --threshold 75    # override score cutoff
+uv run job-matcher cleanup                               # drop closed 'Pending' sheet rows, mark DB entries inactive (asks first)
 
 # Lint / format
 uv run ruff check --fix .
@@ -47,7 +48,8 @@ uv run ruff format .
 
 ```
 src/
-  main.py              # CLI entry point (click command)
+  main.py              # CLI entry point (click group; runs the pipeline when no subcommand)
+  cleanup.py           # `cleanup` subcommand: find closed postings, confirm, delete sheet rows + mark DB rows inactive
   config.py            # All env-var loading; imported by every module
   resume.py            # PDF extraction (pdfplumber) + PII redaction (Presidio/spaCy)
   notifications.py     # Desktop/SNS notification helper
@@ -62,7 +64,8 @@ src/
     session.py         # Cookie save/load helpers
 
   db/
-    database.py        # PostgreSQL helpers (psycopg2)
+    database.py        # PostgreSQL helpers (psycopg2); init_db() runs Alembic migrations
+    migrations/        # Alembic env.py + versions/ (0001 baseline, 0002 is_active)
     __init__.py
 
   matcher/
@@ -122,9 +125,24 @@ PDF file
   derived from the SHA-256 of the *redacted* text. Changing the redaction logic
   creates new resume rows and invalidates the cache for all jobs.
 
-- **`init_db()` is idempotent.** It uses `CREATE TABLE IF NOT EXISTS` and
-  `ALTER TABLE … ADD COLUMN IF NOT EXISTS`. Schema migrations belong here, not in
-  separate migration files.
+- **Schema changes are Alembic migrations** in `src/db/migrations/versions/`.
+  `init_db()` runs `alembic upgrade head` on every start (local and Lambda), so a
+  new migration is applied automatically by the next run; it is configured in code
+  (`script_location` = the migrations dir next to `database.py`), not via
+  `alembic.ini`, so Lambda needs only `COPY src/` plus the `alembic` dependency
+  from `uv.lock`. `0001` is idempotent so pre-Alembic databases are adopted as-is.
+  Add one with `uv run alembic revision -m "..."` (hand-written SQL/op calls, no
+  autogenerate — there are no ORM models); `alembic.ini` is for that dev CLI only.
+
+- **`cleanup` never deletes on uncertainty.** `JobBoardBrowser.closed_reason()` raises
+  if a page can't load and returns a reason only on a phrase match (`closed_phrases`)
+  or HTTP 404/410; unreachable or blocked links are reported and left alone. Only
+  `Pending` rows are deleted, and only after interactive confirmation. DB rows are
+  never deleted: `deactivate_jobs_by_links` (one transaction) sets `is_active = 'no'`
+  on the job and its matches and stamps `jobs.deactivated_on`. That runs first, then
+  the sheet rows, so a failed sheet step is repaired by re-running. `_run_source`
+  skips inactive jobs (`is_job_active`); their cached match keeps
+  `added_to_sheet = TRUE`, so they are never re-added to the sheet.
 
 - **Per-source isolation in the main loop.** A crash in one board's `_run_source()`
   call must not stop other boards. The outer `except Exception` in `main.py` achieves
@@ -175,7 +193,9 @@ CREATE TABLE resume (
 CREATE TABLE jobs (
     id       SERIAL PRIMARY KEY,
     job_link TEXT NOT NULL,
-    added_on TIMESTAMPTZ DEFAULT NOW()
+    added_on TIMESTAMPTZ DEFAULT NOW(),
+    is_active      active_flag NOT NULL DEFAULT 'yes',   -- 'no' = posting closed
+    deactivated_on TIMESTAMPTZ                            -- set when marked 'no'
 );
 
 -- One row per (resume, job) pair
@@ -186,9 +206,15 @@ CREATE TABLE job_matches (
     score            INTEGER NOT NULL,           -- 0–100
     recommendation   TEXT NOT NULL,
     additional_notes TEXT NOT NULL DEFAULT '',
-    added_to_sheet   BOOLEAN NOT NULL DEFAULT FALSE
+    added_to_sheet   BOOLEAN NOT NULL DEFAULT FALSE,
+    is_active        active_flag NOT NULL DEFAULT 'yes'
 );
+
+-- Postgres enum used by jobs.is_active and job_matches.is_active
+CREATE TYPE active_flag AS ENUM ('yes', 'no');
 ```
+
+Managed by Alembic (see §5); the DDL above is the resulting shape, not what runs.
 
 ---
 
