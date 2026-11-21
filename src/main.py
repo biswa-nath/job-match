@@ -16,6 +16,7 @@ from db.database import (
     init_db,
     get_or_create_resume,
     get_or_create_job,
+    is_job_active,
     get_match,
     save_match,
     mark_added_to_sheet,
@@ -123,6 +124,10 @@ def _run_source(
         for job_stub in saved_jobs:
             console.print(f"\n[cyan]Processing:[/cyan] {job_stub['url']}")
             job_id = get_or_create_job(conn, job_stub["url"])
+
+            if not is_job_active(conn, job_id):
+                console.print("[dim]Closed posting (inactive) — skipped.[/dim]")
+                continue
 
             existing = get_match(conn, resume_id, job_id)
             if existing:
@@ -290,7 +295,7 @@ def main(
 
     conn = get_connection()
     try:
-        init_db(conn)
+        init_db()
         resume_id = get_or_create_resume(conn, resume_text)
         console.print(f"[dim]Resume id: {resume_id}[/dim]")
 

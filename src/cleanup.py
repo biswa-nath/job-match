@@ -8,7 +8,7 @@ from rich.table import Table
 
 import config
 from browser import get_browser, source_for_url
-from db.database import delete_jobs_by_links, get_connection, init_db
+from db.database import deactivate_jobs_by_links, get_connection, init_db
 from sheets.google_sheets import delete_pending_rows_by_links, get_pending_links
 
 console = Console()
@@ -95,7 +95,8 @@ def _cleanup(headless_only: bool) -> None:
     console.print(table)
 
     if not click.confirm(
-        f"Delete the sheet rows and database entries for these {len(closed)} link(s)?"
+        f"Delete the sheet rows and mark the database entries inactive "
+        f"for these {len(closed)} link(s)?"
     ):
         console.print("[yellow]Nothing deleted.[/yellow]")
         return
@@ -103,16 +104,15 @@ def _cleanup(headless_only: bool) -> None:
     closed_links = [link for link, _ in closed]
 
     # DB first: if the sheet step fails, the rows are still 'Pending' and a
-    # re-run finds them again (the DB delete is then a harmless no-op).
+    # re-run finds them again (marking inactive is then a harmless no-op).
+    init_db()
     conn = get_connection()
     try:
-        init_db(conn)
-        matches, jobs, resumes = delete_jobs_by_links(conn, closed_links)
+        jobs, matches = deactivate_jobs_by_links(conn, closed_links)
     finally:
         conn.close()
     console.print(
-        f"[green]Database:[/green] deleted {jobs} job(s), {matches} match(es), "
-        f"{resumes} orphaned resume(s)."
+        f"[green]Database:[/green] marked {jobs} job(s) and {matches} match(es) inactive."
     )
 
     rows = delete_pending_rows_by_links(closed_links)
@@ -129,7 +129,7 @@ def _cleanup(headless_only: bool) -> None:
 def cleanup(headless_only: bool) -> None:
     """
     Find 'Pending' sheet rows whose job posting is closed, list them, and — after
-    confirmation — delete the rows and their database entries.
+    confirmation — delete the rows and mark their database entries inactive.
     """
     try:
         _cleanup(headless_only or config.LAMBDA_MODE)

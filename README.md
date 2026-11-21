@@ -40,7 +40,9 @@ uv run job-matcher --resume my_cv.pdf --headless-only        # skip browser logi
 uv run job-matcher cleanup                                   # remove 'Pending' rows whose job no longer accepts applications
 ```
 
-`cleanup` opens the link of every sheet row with Status `Pending`, lists the ones that are closed (e.g. "No longer accepting applications", "This job has expired on Indeed"), and — only after you confirm — deletes those rows from the sheet along with their database entries. Links that can't be checked are left untouched.
+`cleanup` opens the link of every sheet row with Status `Pending`, lists the ones that are closed (e.g. "No longer accepting applications", "This job has expired on Indeed"), and — only after you confirm — deletes those rows from the sheet and marks their database entries inactive (`is_active = 'no'`, nothing is deleted from the DB, and later runs skip them). Links that can't be checked are left untouched.
+
+Database schema changes are [Alembic](https://alembic.sqlalchemy.org/) migrations in `src/db/migrations/`, applied automatically on startup; create a new one with `uv run alembic revision -m "..."`.
 
 ## Tech stack
 
