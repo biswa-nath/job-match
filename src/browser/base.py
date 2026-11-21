@@ -1,5 +1,7 @@
 import json
+import re
 from abc import ABC, abstractmethod
+from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import Playwright, BrowserContext, Page
 from rich.console import Console
@@ -159,18 +161,54 @@ class JobBoardBrowser(ABC):
         "this job is no longer available",
     )
 
+    # Closed banners sit at the top of the posting (or are the whole page, as on
+    # Indeed's expired page). Only this many leading characters of the main
+    # content are searched, so "closed" badges on related jobs further down an
+    # open posting are not mistaken for the posting's own status.
+    closed_scan_chars: int = 1500
+
+    @staticmethod
+    def _job_key(url: str) -> str | None:
+        """Identifier that must survive redirects: Indeed's `jk`, else the last
+        run of 6+ digits in the path (LinkedIn / Naukri job ids)."""
+        parsed = urlparse(url)
+        jk = parse_qs(parsed.query).get("jk")
+        if jk:
+            return jk[0]
+        ids = re.findall(r"\d{6,}", parsed.path)
+        return ids[-1] if ids else None
+
+    def _landed_on_job(self, requested: str, final: str) -> bool:
+        key = self._job_key(requested)
+        if key:
+            return key in final
+        return urlparse(requested).path.rstrip("/") == urlparse(final).path.rstrip("/")
+
     def closed_reason(self, page: Page, url: str) -> str | None:
         """
-        Open a job page and return why it is closed (the matched phrase or HTTP
-        status), or None if it still looks open. Raises if the page cannot be
-        loaded — callers must treat that as "unknown", never as closed.
+        Open a job page and return why it is closed (HTTP status, or the matched
+        phrase with surrounding text), or None if it still looks open. Raises if
+        the page cannot be loaded or is not the requested job (login wall,
+        redirect, bot block) — callers must treat that as "unknown", never as
+        closed.
         """
         response = page.goto(url, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
+        if not self._landed_on_job(url, page.url):
+            raise RuntimeError(f"redirected away from the job page to {page.url}")
         if response and response.status in (404, 410):
             return f"HTTP {response.status}"
-        text = page.locator("body").inner_text().lower()
-        return next((p for p in self.closed_phrases if p in text), None)
+        container = page.locator("main")
+        if container.count() == 0:
+            container = page.locator("body")
+        text = " ".join(container.first.inner_text().split())[: self.closed_scan_chars]
+        lowered = text.lower()
+        for phrase in self.closed_phrases:
+            at = lowered.find(phrase)
+            if at != -1:
+                start, end = max(0, at - 40), at + len(phrase) + 40
+                return f'"{phrase}" — …{text[start:end]}…'
+        return None
 
     @abstractmethod
     def get_saved_jobs(self, page: Page) -> list[dict]:

@@ -190,6 +190,18 @@ def get_pending_links() -> list[str]:
     return list(links)
 
 
+def still_pending_links(links: list[str]) -> list[str]:
+    """
+    Re-read the sheet and return those of links that currently have a 'Pending'
+    row and no row with any other Status (e.g. 'Applied'), preserving order.
+    Used right before acting, so a status changed since the check is respected.
+    """
+    statuses: dict[str, set[str]] = {}
+    for _, link, status in _read_link_rows(get_sheets_service()):
+        statuses.setdefault(link, set()).add(status.strip().lower())
+    return [link for link in links if statuses.get(link) == {"pending"}]
+
+
 def delete_pending_rows_by_links(links: list[str]) -> int:
     """
     Delete every 'Pending' row whose Link is in links. The sheet is re-read here

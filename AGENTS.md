@@ -130,19 +130,30 @@ PDF file
   new migration is applied automatically by the next run; it is configured in code
   (`script_location` = the migrations dir next to `database.py`), not via
   `alembic.ini`, so Lambda needs only `COPY src/` plus the `alembic` dependency
-  from `uv.lock`. `0001` is idempotent so pre-Alembic databases are adopted as-is.
+  from `uv.lock`. `0001` and `0002` are idempotent (`IF NOT EXISTS`) so pre-Alembic or hand-patched
+  databases are adopted as-is. `env.py` takes a transaction-scoped
+  `pg_advisory_xact_lock` and `SET LOCAL lock_timeout = '30s'`, so overlapping runs
+  queue instead of colliding and a start-up never hangs behind a table lock.
   Add one with `uv run alembic revision -m "..."` (hand-written SQL/op calls, no
   autogenerate — there are no ORM models); `alembic.ini` is for that dev CLI only.
 
 - **`cleanup` never deletes on uncertainty.** `JobBoardBrowser.closed_reason()` raises
   if a page can't load and returns a reason only on a phrase match (`closed_phrases`)
   or HTTP 404/410; unreachable or blocked links are reported and left alone. Only
-  `Pending` rows are deleted, and only after interactive confirmation. DB rows are
+  `Pending` rows are deleted, and only after interactive confirmation. A page that
+  redirected away from the requested job (login wall, other job, search page) raises
+  instead of being judged, and only the first `closed_scan_chars` of `<main>` are
+  searched so "closed" badges on related jobs don't count. Just before acting, the
+  sheet is re-read (`still_pending_links`) and any link no longer purely `Pending`
+  is skipped in both sheet and DB. DB rows are
   never deleted: `deactivate_jobs_by_links` (one transaction) sets `is_active = 'no'`
   on the job and its matches and stamps `jobs.deactivated_on`. That runs first, then
   the sheet rows, so a failed sheet step is repaired by re-running. `_run_source`
   skips inactive jobs (`is_job_active`); their cached match keeps
   `added_to_sheet = TRUE`, so they are never re-added to the sheet.
+  There is no reactivate command; to undo, run
+  `UPDATE jobs SET is_active='yes', deactivated_on=NULL WHERE job_link=...;` and the
+  same `is_active='yes'` on its `job_matches`.
 
 - **Per-source isolation in the main loop.** A crash in one board's `_run_source()`
   call must not stop other boards. The outer `except Exception` in `main.py` achieves

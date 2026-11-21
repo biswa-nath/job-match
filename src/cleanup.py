@@ -9,7 +9,11 @@ from rich.table import Table
 import config
 from browser import get_browser, source_for_url
 from db.database import deactivate_jobs_by_links, get_connection, init_db
-from sheets.google_sheets import delete_pending_rows_by_links, get_pending_links
+from sheets.google_sheets import (
+    delete_pending_rows_by_links,
+    get_pending_links,
+    still_pending_links,
+)
 
 console = Console()
 
@@ -101,7 +105,19 @@ def _cleanup(headless_only: bool) -> None:
         console.print("[yellow]Nothing deleted.[/yellow]")
         return
 
-    closed_links = [link for link, _ in closed]
+    # Re-read the sheet: act only on links still 'Pending' (and nowhere marked
+    # otherwise), so a row updated while we were checking is left alone in both
+    # the sheet and the database.
+    closed_links = still_pending_links([link for link, _ in closed])
+    skipped = len(closed) - len(closed_links)
+    if skipped:
+        console.print(
+            f"[yellow]{skipped} link(s) changed status in the sheet since "
+            f"the check and were left untouched.[/yellow]"
+        )
+    if not closed_links:
+        console.print("[yellow]Nothing to delete.[/yellow]")
+        return
 
     # DB first: if the sheet step fails, the rows are still 'Pending' and a
     # re-run finds them again (marking inactive is then a harmless no-op).
