@@ -1,7 +1,10 @@
 import hashlib
+from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
+from alembic import command
+from alembic.config import Config
 
 import config
 
@@ -12,47 +15,11 @@ def get_connection():
     return psycopg2.connect(config.DATABASE_URL)
 
 
-def init_db(conn) -> None:
-    """Create tables if they don't already exist."""
-    with conn.cursor() as cur:
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS resume (
-                id          SERIAL PRIMARY KEY,
-                signature   TEXT NOT NULL,
-                added_on    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                text        TEXT NOT NULL
-            )
-        """)
-        cur.execute(
-            "CREATE INDEX IF NOT EXISTS idx_resume_signature ON resume (signature)"
-        )
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS jobs (
-                id          SERIAL PRIMARY KEY,
-                job_link    TEXT NOT NULL,
-                added_on    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-        """)
-        cur.execute("CREATE INDEX IF NOT EXISTS idx_jobs_job_link ON jobs (job_link)")
-
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS job_matches (
-                id               SERIAL PRIMARY KEY,
-                resume_id        INTEGER NOT NULL REFERENCES resume (id),
-                job_id           INTEGER NOT NULL REFERENCES jobs (id),
-                score            INTEGER NOT NULL,
-                recommendation   TEXT NOT NULL,
-                additional_notes TEXT NOT NULL DEFAULT '',
-                added_to_sheet   BOOLEAN NOT NULL DEFAULT FALSE
-            )
-        """)
-        # Migration: add added_to_sheet if table already exists without it
-        cur.execute("""
-            ALTER TABLE job_matches
-            ADD COLUMN IF NOT EXISTS added_to_sheet BOOLEAN NOT NULL DEFAULT FALSE
-        """)
-    conn.commit()
+def init_db() -> None:
+    """Apply pending Alembic migrations; also creates the schema on a fresh database."""
+    cfg = Config()
+    cfg.set_main_option("script_location", str(Path(__file__).parent / "migrations"))
+    command.upgrade(cfg, "head")
 
 
 def _signature(text: str) -> str:
@@ -143,6 +110,40 @@ def delete_jobs_by_source(conn, source: str) -> tuple[int, int]:
         jobs_deleted = cur.rowcount
     conn.commit()
     return matches_deleted, jobs_deleted
+
+
+def deactivate_jobs_by_links(conn, links: list[str]) -> tuple[int, int]:
+    """Mark the jobs for the given links, and their job_matches, inactive
+    (one transaction). Rows already inactive are left as they are.
+    Returns (jobs_deactivated, matches_deactivated)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE jobs SET is_active = 'no', deactivated_on = NOW()
+            WHERE job_link = ANY(%s) AND is_active = 'yes'
+            """,
+            (links,),
+        )
+        jobs_deactivated = cur.rowcount
+        cur.execute(
+            """
+            UPDATE job_matches SET is_active = 'no'
+            WHERE is_active = 'yes'
+              AND job_id IN (SELECT id FROM jobs WHERE job_link = ANY(%s))
+            """,
+            (links,),
+        )
+        matches_deactivated = cur.rowcount
+    conn.commit()
+    return jobs_deactivated, matches_deactivated
+
+
+def is_job_active(conn, job_id: int) -> bool:
+    """Return False if the job has been marked inactive (closed posting)."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT is_active FROM jobs WHERE id = %s", (job_id,))
+        row = cur.fetchone()
+    return row is None or row[0] == "yes"
 
 
 def mark_added_to_sheet(conn, match_id: int) -> None:
